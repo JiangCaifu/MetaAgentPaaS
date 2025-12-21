@@ -1,0 +1,16 @@
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+# PyCharm配置
+.idea/
+# 日志文件
+*.log
+# 环境变量文件
+.env
+# 数据文件
+*.db
+*.csv

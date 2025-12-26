@@ -1,9 +1,12 @@
 import logging
+
 logging.basicConfig(
     level=logging.DEBUG,  # 开启DEBUG级别，打印详细响应
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("MetaAgentPaaS")
+
+
 import requests
 import json
 import logging
@@ -20,7 +23,8 @@ load_dotenv()
 class BailianEmbeddingClient:
     """阿里云百炼Embedding API客户端（适配JSON文件输入）"""
     BAILIAN_EMBEDDING_URL = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding"
-
+    BATCH_LIMIT = 10
+    VALID_MODEL = "text-embedding-v4"
     def __init__(self):
         self.api_key = os.getenv("DASHSCOPE_API_KEY")
         if not self.api_key:
@@ -117,68 +121,76 @@ class BailianEmbeddingClient:
 
         # 3. 处理JSON数据（兼容两种常见格式）
         # 格式1：单文本对象 → {"text": "故宫是皇家宫殿", "id": 1}
+        # 提取有效文本
+        all_texts = []
         if isinstance(json_data, dict) and text_field in json_data:
-            text = str(json_data[text_field]).strip().replace("\u0000", "").replace("\n", " ")
-            vector = self.get_embedding(text)
-            logger.info(f"JSON文件（单文本）向量化完成，文件路径：{json_file_path}")
-            return vector
+            text = str(json_data[text_field]).strip()
+            if text:
+                all_texts.append({"text": text, "index": 0})
 
-        # 格式2：多文本列表 → [{"text": "故宫..."}, {"text": "兵马俑..."}]
-        elif isinstance(json_data, list) and all(isinstance(item, dict) and text_field in item for item in json_data):
-            batch_result = []
+        elif isinstance(json_data, list):
             for idx, item in enumerate(json_data):
-                try:
-                    text = str(item[text_field]).strip().replace("\u0000", "").replace("\n", " ")
-                    vector = self.get_embedding(text)
-                    batch_result.append({
-                        "text": text,
-                        "vector": vector,
-                        "index": idx  # 保留索引，方便对应原JSON数据
-                    })
-                except Exception as e:
-                    logger.error(f"JSON文件中第{idx}条文本向量化失败：{str(e)}")
-                    batch_result.append({
-                        "text": item.get(text_field, ""),
-                        "vector": [],
-                        "index": idx,
-                        "error": str(e)
-                    })
-            logger.info(
-                f"JSON文件（多文本）向量化完成，文件路径：{json_file_path}，总条数：{len(json_data)}，成功条数：{len([x for x in batch_result if x['vector']])}")
-            return batch_result
+                text = str(item.get(text_field, "")).strip()
+                if text:
+                    all_texts.append({"text": text, "index": idx})
 
-        # 格式不兼容
-        else:
-            error_msg = f"JSON文件格式不兼容！要求：\n" \
-                        f"1. 单文本：{{\"{text_field}\": \"文本内容\"}}\n" \
-                        f"2. 多文本：[{{\"{text_field}\": \"文本1\"}}, {{\"{text_field}\": \"文本2\"}}]"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+        if not all_texts:
+            raise ValueError("JSON文件中未提取到有效文本！")
 
-    # ========== 保留原有批量向量化方法 ==========
-    def batch_embedding(self, texts: List[Dict[str, str]]) -> List[Dict[str, List[float]]]:
-        if not texts or len(texts) == 0:
-            logger.warning("批量向量化文本列表为空")
-            return []
-
+        #拆分，10条/批
+        batches = [all_texts[i:i + self.BATCH_LIMIT] for i in range(0, len(all_texts), self.BATCH_LIMIT)]
         batch_result = []
-        for item in texts:
+        # 4. 逐批调用接口
+        for batch_idx, batch in enumerate(batches):
+            batch_texts = [item["text"] for item in batch]
+            payload = {
+                "model": self.VALID_MODEL,
+                "input": {"texts": batch_texts}  # 正确字段名：input.texts
+            }
+
             try:
-                text = item.get("text", "")
-                vector = self.get_embedding(text)
-                batch_result.append({
-                    "text": text,
-                    "vector": vector
-                })
+                # 发送请求
+                response = requests.post(
+                    url=self.BAILIAN_EMBEDDING_URL,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=30,
+                    verify=False
+                )
+                logger.debug(f"第{batch_idx + 1}批响应：{response.status_code} - {response.text}")
+                response.raise_for_status()
+
+                # 解析向量
+                result = response.json()
+                embeddings = result.get("output", {}).get("embeddings", [])
+                for idx, item in enumerate(batch):
+                    if idx < len(embeddings):
+                        batch_result.append({
+                            "text": item["text"],
+                            "vector": embeddings[idx]["embedding"],
+                            "index": item["index"],
+                            "error": ""
+                        })
+                    else:
+                        batch_result.append({
+                            "text": item["text"],
+                            "vector": [],
+                            "index": item["index"],
+                            "error": "批次响应中无该文本向量"
+                        })
+
             except Exception as e:
-                logger.error(f"批量向量化失败（文本：{item.get('text')}）：{str(e)}")
-                batch_result.append({
-                    "text": item.get("text", ""),
-                    "vector": [],
-                    "error": str(e)
-                })
+                error_msg = f"第{batch_idx + 1}批调用失败：{str(e)}"
+                logger.error(error_msg)
+                for item in batch:
+                    batch_result.append({
+                        "text": item["text"],
+                        "vector": [],
+                        "index": item["index"],
+                        "error": error_msg
+                    })
 
-        logger.info(f"批量向量化完成，总数量：{len(texts)}，成功数量：{len([x for x in batch_result if x['vector']])}")
+        # 按原始索引排序，保证结果顺序和JSON一致
+        batch_result.sort(key=lambda x: x["index"])
+        logger.info(f"JSON文件向量化完成：总条数={len(all_texts)}，成功条数={len([x for x in batch_result if x['vector']])}")
         return batch_result
-
-

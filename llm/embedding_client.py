@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 logging.basicConfig(
     level=logging.DEBUG,  # 开启DEBUG级别，打印详细响应
@@ -95,7 +96,7 @@ class BailianEmbeddingClient:
             raise
 
     # ========== 新增JSON文件处理方法（核心修改） ==========
-    def get_embedding_from_json(self, json_file_path: str, text_field: str = "text") -> Union[
+    def get_embedding_from_json(self, json_file_path: str, text_field: str = "text",save_path: str = "./embeddings_result.json") -> Union[
         List[float], List[Dict[str, List[float]]]]:
         """
         从JSON文件中提取文本并生成Embedding向量
@@ -192,5 +193,25 @@ class BailianEmbeddingClient:
 
         # 按原始索引排序，保证结果顺序和JSON一致
         batch_result.sort(key=lambda x: x["index"])
+
+        # ========== 新增：保存向量到JSON文件 ==========
+        # 构造保存数据（补充元信息：模型名、向量维度、生成时间）
+        save_data = {
+            "meta_info": {
+                "model": self.VALID_MODEL,
+                "vector_dimension": len(batch_result[0]["vector"]) if batch_result and batch_result[0]["vector"] else 0,
+                "total_texts": len(batch_result),
+                "success_texts": len([x for x in batch_result if x["vector"]]),
+                "generate_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            },
+            "embeddings": batch_result
+        }
+        # 保存到JSON文件（ensure_ascii=False保留中文，indent格式化）
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(save_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"向量结果已保存到：{save_path}")
+        logger.info(f"保存统计：总文本数={save_data['meta_info']['total_texts']}，成功数={save_data['meta_info']['success_texts']}")
+
         logger.info(f"JSON文件向量化完成：总条数={len(all_texts)}，成功条数={len([x for x in batch_result if x['vector']])}")
         return batch_result

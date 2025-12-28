@@ -15,3 +15,6 @@ venv/
 *.db
 *.csv
 # 忽略敏感配置文件（阿里百炼API密钥等）
+*embedding*.json
+*data*.json
+*result*.json

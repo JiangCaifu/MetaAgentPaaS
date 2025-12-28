@@ -15,17 +15,17 @@ class ConversationDB:
         cursor = conn.cursor()
 
         # 对话记录表（关联租户ID）
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tenant_id TEXT NOT NULL,
-            agent_ids TEXT NOT NULL,  # 逗号分隔的Agent ID列表
-            user_query TEXT NOT NULL,
-            aggregated_result TEXT NOT NULL,
-            conversation_id TEXT NOT NULL,
-            create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL,  -- 新增：租户ID（插入所需）
+                agent_ids TEXT NOT NULL,  -- 新增：Agent ID列表（插入所需）
+                user_query TEXT NOT NULL, -- 新增：用户查询内容（插入所需）
+                aggregated_result TEXT NOT NULL, -- 新增：聚合结果（插入所需）
+                conversation_id TEXT NOT NULL, -- 新增：对话ID（插入所需）
+                user_id TEXT DEFAULT '',  -- 移除 NOT NULL，设置默认空字符串
+                content TEXT DEFAULT '', -- 移除 NOT NULL，设置默认空字符串
+                create_time TEXT DEFAULT '' -- 移除 NOT NULL，设置默认空字符串
+            )''')
         conn.commit()
         conn.close()
         logger.info("数据库表初始化完成")

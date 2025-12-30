@@ -47,16 +47,18 @@ class BailianEmbeddingClient:
             return []
 
         # ===== 新增：文本长度校验（避免超限）=====
-        text_clean = [t.strip() for t in text if t.strip()]
+        text_clean = text.strip()
+
         if len(text_clean) > 8192:
             logger.warning(f"文本长度超限（{len(text_clean)}字符），自动截断为8192字符")
             text_clean = text_clean[:8192]
-
+        valid_texts_list = [text_clean]
         try:
             payload = {
                 "model": "text-embedding-v4",  # 必须指定模型名称
                 "input": {
-                    "texts": text_clean
+                    "texts": valid_texts_list
+                    #"texts": ['北', '京', '故', '宫', '是', '明', '清', '两', '代', '的', '宫', '殿']
                 }
             }
             response = requests.post(

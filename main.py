@@ -15,9 +15,9 @@ import asyncio
 # 自定义模块（新增）
 from utils.logger_config import setup_logger
 from prompt.templates import PromptManager
-from llm.embedding_client import BailianEmbeddingClient
 from db.operations import ConversationDB
 from llm.client import qwen_client
+from llm.embedding_client import BailianEmbeddingClient
 
 # 配置日志（输出到控制台+文件）
 logging.basicConfig(
@@ -54,6 +54,7 @@ TENANT_CONFIG: Dict[str, Dict] = {
 # 初始化新增组件（全局单例）
 prompt_manager = PromptManager()
 embedding_client = BailianEmbeddingClient()
+client = BailianEmbeddingClient()
 conversation_db = ConversationDB()
 
 
@@ -242,6 +243,7 @@ async def text_embedding(request: EmbeddingRequest):
     """文本向量化接口（集成百炼Embedding API）"""
     try:
         vector = embedding_client.get_embedding(request.text)
+        #vector = embedding_client.get_embedding("北京故宫是明清两代的宫殿")
         return {
             "code": 200,
             "msg": "success",

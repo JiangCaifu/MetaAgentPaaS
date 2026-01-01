@@ -3,6 +3,8 @@ import logging
 import os
 import uuid
 import json
+from pydantic import BaseModel
+from db.qdrant_vector_store import QdrantVectorStore
 
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -333,7 +335,45 @@ async def multi_agent_task(
         }
     }
 
+# 初始化Qdrant向量库（与main.py中的其他组件同级，全局单例）
+vector_store = QdrantVectorStore()
 
+# 定义RAG查询模型（与main.py中的其他模型同级）
+class RAGQuery(BaseModel):
+    query: str
+    top_k: int = 3
+# 新增RAG问答接口（与main.py中的其他接口同级）
+@app.post("/api/v2/rag/qa", tags=["核心接口"])
+async def rag_qa(
+        request: RAGQuery,
+        tenant_info: Dict = Depends(get_current_tenant)
+):
+    """RAG基础问答接口（集成Qdrant向量检索+LLM生成）"""
+    try:
+        # 1. 向量检索
+        search_results = vector_store.search(request.query, top_k=request.top_k)
+        # 2. 拼接上下文
+        context = "\n".join([res["content"] for res in search_results])
+        # 3. 复用main.py中的LLM调用逻辑（call_single_agent或直接调用qwen_client）
+        prompt = f"""
+        基于以下上下文回答用户问题，不要编造信息。
+        上下文：{context}
+        用户问题：{request.query}
+        回答：
+        """
+        llm_response = await qwen_client.generate(prompt, tenant_info["tenant_id"])
+        # 4. 构造响应
+        return {
+            "code": 200,
+            "msg": "success",
+            "data": {
+                "query": request.query,
+                "answer": llm_response,
+                "contexts": search_results
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG问答失败：{str(e)}")
 # ====================== 9. 启动服务 ======================
 if __name__ == "__main__":
     import uvicorn

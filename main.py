@@ -335,9 +335,16 @@ async def multi_agent_task(
         }
     }
 
-# 初始化Qdrant向量库（与main.py中的其他组件同级，全局单例）
-vector_store = QdrantVectorStore()
+# 定义全局单例变量
+_qdrant_singleton = None
 
+# 单例依赖函数：确保全局仅一个 QdrantVectorStore 实例
+def get_qdrant_vector_store_singleton():
+    global _qdrant_singleton
+    # 仅当实例不存在时，才创建新实例
+    if _qdrant_singleton is None:
+        _qdrant_singleton = QdrantVectorStore()
+    return _qdrant_singleton
 # 定义RAG查询模型（与main.py中的其他模型同级）
 class RAGQuery(BaseModel):
     query: str
@@ -346,7 +353,9 @@ class RAGQuery(BaseModel):
 @app.post("/api/v2/rag/qa", tags=["核心接口"])
 async def rag_qa(
         request: RAGQuery,
-        tenant_info: Dict = Depends(get_current_tenant)
+        tenant_info: Dict = Depends(get_current_tenant),
+        # 注入单例实例，避免重复创建
+        vector_store: QdrantVectorStore = Depends(get_qdrant_vector_store_singleton)
 ):
     """RAG基础问答接口（集成Qdrant向量检索+LLM生成）"""
     try:
@@ -376,13 +385,14 @@ async def rag_qa(
         raise HTTPException(status_code=500, detail=f"RAG问答失败：{str(e)}")
 # ====================== 9. 启动服务 ======================
 if __name__ == "__main__":
+    vector_store = QdrantVectorStore()
     import uvicorn
 
     uvicorn.run(
         app="main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=False
     )
 
 

@@ -75,9 +75,20 @@ class BailianEmbeddingClient:
             result = response.json()
             if "output" in result and "embeddings" in result["output"]:
 
-                vector =  [item["embedding"] for item in response.json().get("output", {}).get("embeddings", [])]
-                logger.info(f"单文本向量化成功，文本长度：{len(text)}，向量维度：{len(vector)}")
-                return vector
+                #vector =  [item["embedding"] for item in response.json().get("output", {}).get("embeddings", [])]
+                #logger.info(f"单文本向量化成功，文本长度：{len(text)}，向量维度：{len(vector)}")
+                embeddings_list = result["output"]["embeddings"]
+                if len(embeddings_list) > 0:
+                    # 修正1：提取第一个元素的embedding，返回一维向量（关键！）
+                    one_dimensional_vector = embeddings_list[0]["embedding"]
+                    # 修正2：打印真实向量维度（内层列表长度）
+                    real_vector_dim = len(one_dimensional_vector)
+                    logger.info(f"单文本向量化成功，文本长度：{len(text)}，向量维度：{real_vector_dim}")
+                    return one_dimensional_vector  # 返回一维向量，而非二维列表
+                else:
+                    logger.error("百炼API返回embeddings列表为空")
+                    return []
+                #return vector
             else:
                 logger.error(f"百炼API返回格式异常：{result}")
                 return []

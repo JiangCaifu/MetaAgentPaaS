@@ -13,6 +13,10 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from pydantic import BaseModel
 import aiohttp
 import asyncio
+# main.py 中新增以下代码（放在现有接口之后、启动服务之前）
+from pydantic import BaseModel
+# 导入文旅Agent核心逻辑
+from agent.core.tourism_agent import call_tourism_agent
 
 # 自定义模块（新增）
 from utils.logger_config import setup_logger
@@ -80,6 +84,10 @@ class AgentTaskResponse(BaseModel):
 
 class EmbeddingRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=1000, description="待向量化的文本")
+
+# 定义Agent工具调用请求模型（与现有模型风格一致）
+class TourismAgentRequest(BaseModel):
+    user_query: str = Field(..., min_length=1, max_length=500, description="用户文旅相关查询")
 
 # ====================== 4. 租户鉴权（核心修复：兼容所有请求头格式） ======================
 async def get_current_tenant(
@@ -383,6 +391,46 @@ async def rag_qa(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RAG问答失败：{str(e)}")
+
+# 新增文旅Agent工具调用接口（集成租户鉴权）
+@app.post("/api/v2/agent/tourism/tool-qa", tags=["核心接口"])
+async def tourism_agent_tool_qa(
+request: TourismAgentRequest,
+        tenant_info: Dict = Depends(get_current_tenant) # 复用现有租户鉴权
+):
+    """文旅问答Agent接口（支持天气查询、景点开放时间查询工具调用）"""
+    try:
+    # 调用文旅Agent（传入租户信息）
+        agent_response = await call_tourism_agent(
+        tenant_id = tenant_info["tenant_id"],
+        tenant_name = tenant_info["name"],
+        user_query = request.user_query
+        )
+        # 记录对话（复用现有ConversationDB）
+        conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
+        conversation_db.add_conversation(
+        tenant_id = tenant_info["tenant_id"],
+        agent_ids = ["tourism_qa_agent"],  # 对应租户配置中的Agent ID​
+                    user_query = request.user_query,
+        aggregated_result = agent_response,
+        conversation_id = conversation_id
+        )
+        return {
+        "code": 200,
+        "msg": "success",
+        "data":{
+        "tenant_info":{
+        "tenant_id": tenant_info["tenant_id"],
+        "tenant_name": tenant_info["name"]
+        },
+        "user_query": request.user_query,
+        "agent_response": agent_response,
+        "conversation_id": conversation_id
+        }
+        }
+    except Exception as e:
+        logger.error(f"文旅Agent接口调用失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"Agent接口调用失败：{str(e)}")
 # ====================== 9. 启动服务 ======================
 if __name__ == "__main__":
     vector_store = QdrantVectorStore()

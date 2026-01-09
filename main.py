@@ -5,6 +5,7 @@ import uuid
 import json
 from pydantic import BaseModel
 from db.qdrant_vector_store import QdrantVectorStore
+from agent.tools.weather_tool import WeatherTool
 
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -410,7 +411,7 @@ request: TourismAgentRequest,
         conversation_id = f"conv_{uuid.uuid4().hex[:8]}"
         conversation_db.add_conversation(
         tenant_id = tenant_info["tenant_id"],
-        agent_ids = ["tourism_qa_agent"],  # 对应租户配置中的Agent ID​
+        agent_ids = ["tourism_qa_agent"],  #
                     user_query = request.user_query,
         aggregated_result = agent_response,
         conversation_id = conversation_id
@@ -431,6 +432,12 @@ request: TourismAgentRequest,
     except Exception as e:
         logger.error(f"文旅Agent接口调用失败：{str(e)}")
         raise HTTPException(status_code=500, detail=f"Agent接口调用失败：{str(e)}")
+weather_tool = WeatherTool()
+@app.get("/weather/{city}")
+async def get_weather(city: str):
+    result = await weather_tool._arun(city)
+    return {"city": city, "weather": result}
+
 # ====================== 9. 启动服务 ======================
 if __name__ == "__main__":
     vector_store = QdrantVectorStore()

@@ -2,6 +2,10 @@ import asyncio
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import Tool
+from langchain.agents import create_tool_calling_agent
+from agent.tools.weather_tool import WeatherTool
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import Tool
 # 导入项目现有LLM客户端（复用百炼大模型，无需重新实现）
 from llm.client import qwen_client
 # 导入自定义工具
@@ -107,3 +111,24 @@ async def call_tourism_agent(tenant_id: str, tenant_name: str, user_query: str) 
     except Exception as e:
         logger.error(f"文旅Agent调用失败：{str(e)}")
         return f"Agent调用失败：{str(e)}"
+if __name__ == "__main__":
+    # 1. 包装工具（两种方式都可）
+    tools = [
+        # 方式1：用装饰器的tool
+        query_weather,
+        # 方式2：用类式工具
+        WeatherTool()
+    ]
+
+    # 2. 简单提示词（测试用，无需LLM）
+    prompt = ChatPromptTemplate.from_messages([
+        ("user", "{input}"),
+        ("assistant", "{agent_scratchpad}")
+    ])
+
+    # 3. 模拟Agent调用（或用真实LLM，如OpenAI）
+    # 这里简化测试：直接调用工具，验证参数传递
+    print("\n=== LangChain工具调用测试 ===")
+    # 直接调用工具（模拟Agent逻辑）
+    tool_result = tools[0].invoke({"city": "深圳"})
+    print(tool_result)

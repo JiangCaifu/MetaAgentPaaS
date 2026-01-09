@@ -1,6 +1,9 @@
 import os
+import time
+
 import requests
 from dotenv import load_dotenv
+import asyncio
 from langchain_core.tools import BaseTool, tool
 from typing import Optional
 # 复用项目现有日志配置
@@ -51,12 +54,41 @@ def query_weather(city: str) -> str:
 
 # 若需兼容LangChain旧版本，可使用类继承方式定义
 class WeatherTool(BaseTool):
-    name = "query_weather"
-    description = "用于查询指定城市的实时天气信息，参数为城市名称（如'北京'）"
+    name: str = "query_weather"
+    description: str = "用于查询指定城市的实时天气信息，参数为城市名称（如'北京'）"
 
     def _run(self, city: str) -> str:
-        return query_weather(city)
+        return query_weather.invoke(city)
 
     async def _arun(self, city: str) -> str:
         # 异步版本（适配项目FastAPI异步架构）
         return await asyncio.to_thread(query_weather, city)
+
+if __name__ == "__main__":
+    # 测试1：同步工具函数（正常场景）
+    print("=== 同步函数测试（正常城市）===")
+    result = query_weather.invoke("北京")
+    print(result)
+
+    # 测试2：同步类方法
+    print("\n=== 同步类方法测试 ===")
+    weather_tool = WeatherTool()
+    result_class = weather_tool._run("上海")
+    print(result_class)
+
+    # 测试3：异常场景（无效城市/API错误）
+    print("\n=== 异常场景测试 ===")
+
+    result_error = query_weather.invoke("不存在的城市123")
+    print(result_error)
+
+
+    async def test_async():
+        print("\n=== 异步方法测试 ===")
+        weather_tool = WeatherTool()
+        result_async = await weather_tool._arun("广州")
+        print(result_async)
+
+    time.sleep(1)
+    # 运行异步测试
+    asyncio.run(test_async())

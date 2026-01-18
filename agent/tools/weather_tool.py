@@ -50,7 +50,8 @@ def query_weather(city: str) -> str:
     except Exception as e:
         logger.error(f"天气查询工具调用失败：{str(e)}")
         return f"天气查询失败：{str(e)}"
-
+query_weather.name = "query_weather"
+query_weather.description = "用于查询指定城市的实时天气信息，参数仅传入城市名称（如北京、上海、深圳）"
 
 # 若需兼容LangChain旧版本，可使用类继承方式定义
 class WeatherTool(BaseTool):

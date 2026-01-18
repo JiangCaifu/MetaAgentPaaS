@@ -56,7 +56,8 @@ def query_scenic_open_time(scenic_name: str) -> str:
     # 返回匹配结果（优先第一个精确匹配）
     open_time = scenic_index[matched[0]]
     return f"{matched[0]} 开放时间：{open_time}"
-
+query_scenic_open_time.name = "query_scenic_open_time"
+query_scenic_open_time.description = "用于查询指定景点的开放时间和门票价格，参数仅传入景点完整名称（如故宫博物院、兵马俑）"
 
 if __name__ == "__main__":
     print("=== 文旅景点开放时间查询工具验证 ===")

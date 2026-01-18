@@ -25,8 +25,12 @@ class QwenLangChainLLM:
     def __call__(self, prompt: str) -> str:
         """同步调用（适配LangChain Agent默认同步逻辑）"""
         try:
-            # 复用main.py中的qwen_client.generate方法
-            response = asyncio.run(qwen_client.generate(prompt, self.tenant_id))
+            # 关键修改：避免 asyncio.run 嵌套，改用同步调用（若 qwen_client 无同步方法，可封装）
+            # 方案：创建临时事件循环，避免与现有异步循环冲突（更安全）
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            response = loop.run_until_complete(qwen_client.generate(prompt, self.tenant_id))
+            loop.close()
             return response
         except Exception as e:
             logger.error(f"LLM调用失败：{str(e)}")
@@ -34,14 +38,21 @@ class QwenLangChainLLM:
 
     async def ainvoke(self, input: dict) -> dict:
         """异步调用（适配项目FastAPI异步架构）"""
-        prompt = input.get("input")
-        response = await qwen_client.generate(prompt, self.tenant_id)
-        return {"output": response}
+        try:
+            prompt = input.get("input", "")
+            if not prompt:
+                return {"output": "用户输入为空"}
+            # 直接异步调用 qwen_client.generate，无嵌套问题
+            response = await qwen_client.generate(prompt, self.tenant_id)
+            return {"output": response}
+        except Exception as e:
+            logger.error(f"LLM异步调用失败：{str(e)}")
+            return {"output": f"LLM调用失败：{str(e)}"}
 
 
 # 2. 定义Agent Prompt（引导Agent正确调用工具，约束输出格式）
 TOURISM_AGENT_PROMPT = PromptTemplate(
-    input_variables=["input", "agent_scratchpad", "tools"],
+    input_variables=["tenant_name", "input", "agent_scratchpad", "tools"],
     template="""你是{tenant_name}的专属文旅问答Agent，负责解答用户的文旅相关问题。
 可用工具：
 {tools}
@@ -91,8 +102,9 @@ def create_tourism_agent(tenant_id: str, tenant_name: str) -> AgentExecutor:
     agent_executor = AgentExecutor(
         agent=agent,
         tools=tools,
-        verbose=True,  # 调试模式，打印思考-行动-观察过程
-        handle_parsing_errors="返回'无法解析工具调用，请重新尝试'并继续"  # 解析错误兜底
+        verbose=True,  # 调试模式，打印思考-行动-观察过程（便于排查工具调用问题）
+        handle_parsing_errors="无法解析工具调用，请重新尝试并继续",  # 解析错误兜底
+        max_iterations=5  # 限制最大迭代次数，避免无限循环
     )
     return agent_executor
 
@@ -101,6 +113,9 @@ def create_tourism_agent(tenant_id: str, tenant_name: str) -> AgentExecutor:
 async def call_tourism_agent(tenant_id: str, tenant_name: str, user_query: str) -> str:
     """异步调用文旅Agent，返回最终回答"""
     try:
+        # 验证输入参数，避免空值报错
+        if not user_query:
+            return "用户查询内容不能为空"
         agent_executor = create_tourism_agent(tenant_id, tenant_name)
         # 异步运行Agent（若Agent是同步的，用asyncio.to_thread包装）
         result = await asyncio.to_thread(

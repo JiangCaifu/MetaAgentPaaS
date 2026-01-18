@@ -18,6 +18,7 @@ import asyncio
 from pydantic import BaseModel
 # 导入文旅Agent核心逻辑
 from agent.core.tourism_agent import call_tourism_agent
+from agent.core.clean_tourism_agent import  call_clean_tourism_agent
 
 # 自定义模块（新增）
 from utils.logger_config import setup_logger
@@ -144,8 +145,8 @@ async def call_single_agent(agent_id: str, query: str, context: Dict, tenant_inf
         tenant_id = tenant_info["tenant_id"]
         tenant_name = tenant_info["name"]
         city = context.get("location", "北京") if context else "北京"
-        prompt= prompt_manager.render_prompt(agent_id, tenant_name, query, city)
-        logger.info(f"传给百炼大模型的Prompt：{prompt}")
+        #prompt= prompt_manager.render_prompt(agent_id, tenant_name, query, city)
+        #logger.info(f"传给百炼大模型的Prompt：{prompt}")
 
         # 原有Prompt分支（不使用模板的prompt）
         """
@@ -402,7 +403,8 @@ request: TourismAgentRequest,
     """文旅问答Agent接口（支持天气查询、景点开放时间查询工具调用）"""
     try:
     # 调用文旅Agent（传入租户信息）
-        agent_response = await call_tourism_agent(
+        logger.info("===== 手动测试调用 call_clean_tourism_agent =====")
+        agent_response = await call_clean_tourism_agent(
         tenant_id = tenant_info["tenant_id"],
         tenant_name = tenant_info["name"],
         user_query = request.user_query
@@ -440,7 +442,9 @@ async def get_weather(city: str):
 
 # ====================== 9. 启动服务 ======================
 if __name__ == "__main__":
-    vector_store = QdrantVectorStore()
+    vector_store = QdrantVectorStore(collection_name="test_collection",
+        path="./local_qdrant_data",  # 本地文件存储，可改为 host+port 连接服务端
+        vector_dimension=1024)
     import uvicorn
 
     uvicorn.run(

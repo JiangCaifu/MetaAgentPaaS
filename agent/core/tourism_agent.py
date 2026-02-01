@@ -8,6 +8,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import Tool
 # 导入项目现有LLM客户端（复用百炼大模型，无需重新实现）
 from llm.client import qwen_client
+from langchain_core.language_models import LLM
+from typing import Optional, List, Any, Dict
+from pydantic import Field
+import asyncio
+import logging
 # 导入自定义工具
 from agent.tools.weather_tool import query_weather
 from agent.tools.scenic_tool import query_scenic_open_time
@@ -18,30 +23,50 @@ logger = setup_logger(name="TourismAgent")
 
 
 # 1. 适配qwen_client为LangChain兼容的LLM类
-class QwenLangChainLLM:
-    def __init__(self, tenant_id: str):
-        self.tenant_id = tenant_id
+class QwenLangChainLLM(LLM):
+    """符合 LangChain 规范的 Qwen LLM 类（适配 ReAct Agent）"""
+    # 定义类属性（用 Field 做注解，兼容 Pydantic 校验，保持和你的原有逻辑一致）
+    tenant_id: str = Field(default="tenant_001", description="租户ID")
 
-    def __call__(self, prompt: str) -> str:
-        """同步调用（适配LangChain Agent默认同步逻辑）"""
+    # 【必备】实现 LangChain LLM 基类要求的 _llm_type 属性（返回 LLM 类型标识）
+    @property
+    def _llm_type(self) -> str:
+        return "qwen-custom"  # 自定义标识，可任意命名，用于日志和溯源
+
+    # 【必备】实现 LangChain LLM 基类要求的 _call 方法（同步调用核心逻辑，框架会自动调用）
+    def _call(
+            self,
+            prompt: str,
+            stop: Optional[List[str]] = None,
+            run_manager: Optional[Any] = None,
+            **kwargs
+    ) -> str:
+        """
+        同步调用 Qwen 模型（LangChain 框架要求的核心方法）
+        避免使用 asyncio.run()，改用直接调用异步方法的适配方案
+        """
         try:
-            # 修复：避免手动创建新循环，转发给异步方法，兼容 FastAPI 已有循环
-            # 非 FastAPI 环境（单独测试）用 asyncio.run，FastAPI 环境用 await（由外部异步调用）
-            return asyncio.run(self.call_async(prompt))
-        except RuntimeError as e:
-            if "another loop is running" in str(e):
-                logger.warning("已有活跃事件循环，建议使用异步方法 call_async 调用")
-                return "请使用异步方法调用该 LLM（FastAPI 环境）"
+            # 修复：适配事件循环，避免 FastAPI 中循环冲突
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 已有活跃循环（FastAPI 环境），用 create_task 或 run_until_complete（兼容同步调用）
+                response = loop.run_until_complete(self.call_async(prompt))
             else:
-                logger.error(f"LLM 调用失败：{str(e)}")
-                return f"LLM 调用失败：{str(e)}"
-
-    async def call_async(self, input: dict) -> dict:
-        """异步调用（适配项目FastAPI异步架构）"""
-        try:
-            # 关键修复：直接 await 调用 qwen_client.generate()，利用 FastAPI 全局循环
-            response = await qwen_client.generate(prompt, self.tenant_id)
+                # 无活跃循环（单独测试），用 asyncio.run()
+                response = asyncio.run(self.call_async(prompt))
             return response
+        except Exception as e:
+            logger.error(f"LLM 同步调用失败：{str(e)}")
+            return f"LLM 调用失败：{str(e)}"
+
+    # 优化：修复异步调用方法（参数、返回值、变量名统一）
+    async def call_async(self, prompt: str) -> str:
+        """异步调用 Qwen 模型（适配 FastAPI 异步架构，修正所有不匹配问题）"""
+        try:
+            # 修复：变量名统一为 prompt，传参正确（self.tenant_id 已从实例属性获取）
+            response = await qwen_client.generate(prompt, self.tenant_id)
+            # 确保返回字符串（符合 LangChain 对 LLM 响应的要求）
+            return str(response) if response else "未获取到有效响应"
         except Exception as e:
             logger.error(f"LLM 异步调用失败：{str(e)}")
             return f"LLM 调用失败：{str(e)}"
@@ -49,7 +74,7 @@ class QwenLangChainLLM:
 
 # 2. 定义Agent Prompt（引导Agent正确调用工具，约束输出格式）
 TOURISM_AGENT_PROMPT = PromptTemplate(
-    input_variables=["tenant_name", "input", "agent_scratchpad", "tools"],
+    input_variables=["tenant_name", "input", "agent_scratchpad", "tools", "tool_names"],
     template="""你是{tenant_name}的专属文旅问答Agent，负责解答用户的文旅相关问题。
 可用工具：
 {tools}

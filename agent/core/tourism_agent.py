@@ -25,29 +25,26 @@ class QwenLangChainLLM:
     def __call__(self, prompt: str) -> str:
         """同步调用（适配LangChain Agent默认同步逻辑）"""
         try:
-            # 关键修改：避免 asyncio.run 嵌套，改用同步调用（若 qwen_client 无同步方法，可封装）
-            # 方案：创建临时事件循环，避免与现有异步循环冲突（更安全）
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            response = loop.run_until_complete(qwen_client.generate(prompt, self.tenant_id))
-            loop.close()
-            return response
-        except Exception as e:
-            logger.error(f"LLM调用失败：{str(e)}")
-            return f"LLM调用失败：{str(e)}"
+            # 修复：避免手动创建新循环，转发给异步方法，兼容 FastAPI 已有循环
+            # 非 FastAPI 环境（单独测试）用 asyncio.run，FastAPI 环境用 await（由外部异步调用）
+            return asyncio.run(self.call_async(prompt))
+        except RuntimeError as e:
+            if "another loop is running" in str(e):
+                logger.warning("已有活跃事件循环，建议使用异步方法 call_async 调用")
+                return "请使用异步方法调用该 LLM（FastAPI 环境）"
+            else:
+                logger.error(f"LLM 调用失败：{str(e)}")
+                return f"LLM 调用失败：{str(e)}"
 
-    async def ainvoke(self, input: dict) -> dict:
+    async def call_async(self, input: dict) -> dict:
         """异步调用（适配项目FastAPI异步架构）"""
         try:
-            prompt = input.get("input", "")
-            if not prompt:
-                return {"output": "用户输入为空"}
-            # 直接异步调用 qwen_client.generate，无嵌套问题
+            # 关键修复：直接 await 调用 qwen_client.generate()，利用 FastAPI 全局循环
             response = await qwen_client.generate(prompt, self.tenant_id)
-            return {"output": response}
+            return response
         except Exception as e:
-            logger.error(f"LLM异步调用失败：{str(e)}")
-            return {"output": f"LLM调用失败：{str(e)}"}
+            logger.error(f"LLM 异步调用失败：{str(e)}")
+            return f"LLM 调用失败：{str(e)}"
 
 
 # 2. 定义Agent Prompt（引导Agent正确调用工具，约束输出格式）
@@ -90,9 +87,22 @@ def create_tourism_agent(tenant_id: str, tenant_name: str) -> AgentExecutor:
             description=query_scenic_open_time.description
         )
     ]
+    # ====================== 新增：格式化工具变量（关键修复） ======================
+    # 1. 格式化 tools 字符串（匹配你模板中的 {tools} 占位符，易读格式）
+    formatted_tools = []
+    for tool in tools:
+        tool_info = f"工具名：{tool.name}\n   描述：{tool.description}"
+        formatted_tools.append(tool_info)
+    # 拼接成最终字符串，对应模板中的 {tools}
+    tools_str = "\n\n".join(formatted_tools)
 
+    # 2. 提取 tool_names 字符串（满足LangChain ReAct框架隐含要求，逗号分隔）
+    tool_names_str = ", ".join([tool.name for tool in tools])
     # 适配租户信息到Prompt
-    prompt = TOURISM_AGENT_PROMPT.partial(tenant_name=tenant_name)
+    prompt = TOURISM_AGENT_PROMPT.partial(tenant_name=tenant_name,
+        tools=tools_str,  # 填充模板中的 {tools}
+        tool_names=tool_names_str  # 处理框架隐含的 {tool_names} 要求##
+     )
 
     # 创建Agent（ReAct模式）
     llm = QwenLangChainLLM(tenant_id=tenant_id)

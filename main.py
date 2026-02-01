@@ -404,7 +404,7 @@ request: TourismAgentRequest,
     try:
     # 调用文旅Agent（传入租户信息）
         logger.info("===== 手动测试调用 call_clean_tourism_agent =====")
-        agent_response = await call_clean_tourism_agent(
+        agent_response = await call_tourism_agent(
         tenant_id = tenant_info["tenant_id"],
         tenant_name = tenant_info["name"],
         user_query = request.user_query
@@ -434,9 +434,10 @@ request: TourismAgentRequest,
     except Exception as e:
         logger.error(f"文旅Agent接口调用失败：{str(e)}")
         raise HTTPException(status_code=500, detail=f"Agent接口调用失败：{str(e)}")
-weather_tool = WeatherTool()
+#weather_tool = WeatherTool()
 @app.get("/weather/{city}")
 async def get_weather(city: str):
+    weather_tool = WeatherTool()
     result = await weather_tool._arun(city)
     return {"city": city, "weather": result}
 

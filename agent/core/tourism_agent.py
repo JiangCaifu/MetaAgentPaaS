@@ -1,5 +1,6 @@
 import asyncio
 from langchain.agents import create_react_agent, AgentExecutor
+from langchain.agents.output_parsers import ReActSingleInputOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import Tool
 from langchain.agents import create_tool_calling_agent
@@ -46,30 +47,44 @@ class QwenLangChainLLM(LLM):
         避免使用 asyncio.run()，改用直接调用异步方法的适配方案
         """
         try:
-            # 修复：适配事件循环，避免 FastAPI 中循环冲突
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 已有活跃循环（FastAPI 环境），用 create_task 或 run_until_complete（兼容同步调用）
-                response = loop.run_until_complete(self.call_async(prompt))
-            else:
-                # 无活跃循环（单独测试），用 asyncio.run()
+            # Bug修复：获取当前运行的事件循环，而非创建新循环
+            loop = asyncio.get_running_loop()
+            response = loop.run_until_complete(self.call_async(prompt))
+            logger.info(f"【LLM调用成功】租户{self.tenant_id}，返回内容：{response[:50]}...")
+            return response.strip() if response else "未获取到有效响应"
+            # 【仅修复Bug】捕获"无运行事件循环"异常，回退到asyncio.run()
+        except RuntimeError as e:
+            if "no running event loop" in str(e):
                 response = asyncio.run(self.call_async(prompt))
-            return response
+                logger.info(f"【LLM调用成功（兼容模式）】租户{self.tenant_id}，返回内容：{response[:50]}...")
+                return response.strip() if response else "未获取到有效响应"
+            else:
+                raise  # 其他异常正常抛出，不兜底
         except Exception as e:
-            logger.error(f"LLM 同步调用失败：{str(e)}")
-            return f"LLM 调用失败：{str(e)}"
+            # ===== 修复空错误信息：打印完整堆栈 =====
+            import traceback
+            error_stack = traceback.format_exc()
+            error_msg = str(e) if str(e) else f"未知错误（类型：{type(e).__name__}）"
+            logger.error(f"LLM 同步调用失败：{error_msg}\n完整堆栈：{error_stack}")
+            return f"LLM 调用失败：{error_msg}"
 
     # 优化：修复异步调用方法（参数、返回值、变量名统一）
     async def call_async(self, prompt: str) -> str:
-        """异步调用 Qwen 模型（适配 FastAPI 异步架构，修正所有不匹配问题）"""
+        """异步调用 Qwen 模型（保留原有逻辑，增加超时）"""
         try:
-            # 修复：变量名统一为 prompt，传参正确（self.tenant_id 已从实例属性获取）
-            response = await qwen_client.generate(prompt, self.tenant_id)
-            # 确保返回字符串（符合 LangChain 对 LLM 响应的要求）
+            # 给模型调用加超时（避免卡住）
+            response = await asyncio.wait_for(
+                qwen_client.generate(prompt, self.tenant_id),
+                timeout=10  # 10秒超时
+            )
             return str(response) if response else "未获取到有效响应"
+        except asyncio.TimeoutError:
+            logger.error(f"LLM 异步调用超时（10秒），租户{self.tenant_id}，prompt：{prompt[:30]}...")
+            return "LLM 调用超时，请稍后重试"
         except Exception as e:
             logger.error(f"LLM 异步调用失败：{str(e)}")
             return f"LLM 调用失败：{str(e)}"
+
 
 
 # 2. 定义Agent Prompt（引导Agent正确调用工具，约束输出格式）
@@ -78,14 +93,20 @@ TOURISM_AGENT_PROMPT = PromptTemplate(
     template="""你是{tenant_name}的专属文旅问答Agent，负责解答用户的文旅相关问题。
 可用工具：
 {tools}
+可用工具名称列表：{tool_names}
 
 工具调用规则：
 1. 若问题需要天气信息（如"北京明天天气怎么样"），调用query_weather工具，参数为城市名称；
 2. 若问题需要景点开放时间（如"故宫几点开门"），调用query_scenic_open_time工具，参数为景点名称；
 3. 若不需要工具即可回答（如"故宫是什么"），直接生成回答，无需调用工具；
-4. 工具调用格式必须严格遵循：Action: 工具名\nAction Input: 参数\nObservation: 工具返回结果\n
-5. 思考过程请记录在agent_scratchpad中，最终回答需简洁、准确，仅返回给用户的内容，不要包含思考过程。
-
+4. 工具调用格式必须严格遵循（仅输出以下两行，无任何多余内容、换行或注释）：
+Thought: 需要调用工具
+Action: 工具名（必须从{tool_names}列表中选择，如query_weather）
+Action Input: 参数（仅填字符串，如"北京"、"故宫"，无需引号）
+5. 思考过程由agent_scratchpad自动记录，你无需手动填写；每完成一次工具调用并获取结果后，立即判断是否需要继续：
+   - 若已获取足够信息，直接返回最终回答，停止迭代；
+   - 若信息不足，可再次调用工具（最多尝试5次）；
+6. 最终回答需简洁、准确，仅返回给用户的内容，不要包含思考过程、Action/Action Input等无关信息。
 用户问题：{input}
 思考过程：{agent_scratchpad}
 最终回答："""
@@ -138,8 +159,11 @@ def create_tourism_agent(tenant_id: str, tenant_name: str) -> AgentExecutor:
         agent=agent,
         tools=tools,
         verbose=True,  # 调试模式，打印思考-行动-观察过程（便于排查工具调用问题）
-        handle_parsing_errors="无法解析工具调用，请重新尝试并继续",  # 解析错误兜底
-        max_iterations=5  # 限制最大迭代次数，避免无限循环
+
+        handle_parsing_errors="工具调用格式解析失败，请检查输入",  # 仅返回错误提示，无固定内容
+        max_iterations=3,  # 减少迭代次数，避免长时间卡住
+        early_stopping_method="force",  # 全版本兼容
+        return_intermediate_steps=False
     )
     return agent_executor
 
@@ -152,15 +176,20 @@ async def call_tourism_agent(tenant_id: str, tenant_name: str, user_query: str) 
         if not user_query:
             return "用户查询内容不能为空"
         agent_executor = create_tourism_agent(tenant_id, tenant_name)
-        # 异步运行Agent（若Agent是同步的，用asyncio.to_thread包装）
-        result = await asyncio.to_thread(
-            agent_executor.invoke,
-            {"input": user_query}
-        )
-        return result.get("output", "Agent未返回有效结果")
+        # Bug修复：改用异步ainvoke()替代同步invoke()，适配FastAPI异步环境
+        result = await agent_executor.ainvoke({"input": user_query})
+
+        # 兜底：若Agent返回迭代限制提示，提取中间结果或返回默认信息
+        output = result.get("output", "")
+        if "Agent stopped due to iteration limit" in output:
+            # 手动返回兜底结果（基于业务知识）
+            return "Agent调用达到迭代上限，未获取到有效结果"
+        return output
     except Exception as e:
-        logger.error(f"文旅Agent调用失败：{str(e)}")
-        return f"Agent调用失败：{str(e)}"
+        error_msg = str(e) if str(e) else f"Agent调用失败（类型：{type(e).__name__}）"
+        logger.error(f"文旅Agent调用失败：{error_msg}")
+        # 兜底返回业务默认结果，提升用户体验
+        return f"Agent调用异常：{error_msg}；"
 if __name__ == "__main__":
     # 1. 包装工具（两种方式都可）
     tools = [

@@ -145,7 +145,7 @@ async def call_single_agent(agent_id: str, query: str, context: Dict, tenant_inf
         tenant_id = tenant_info["tenant_id"]
         tenant_name = tenant_info["name"]
         city = context.get("location", "北京") if context else "北京"
-        #prompt= prompt_manager.render_prompt(agent_id, tenant_name, query, city)
+        prompt= prompt_manager.render_prompt(agent_id, tenant_name, query, city)
         #logger.info(f"传给百炼大模型的Prompt：{prompt}")
 
         # 原有Prompt分支（不使用模板的prompt）

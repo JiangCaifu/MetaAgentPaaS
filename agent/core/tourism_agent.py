@@ -98,18 +98,16 @@ TOURISM_AGENT_PROMPT = PromptTemplate(
 工具调用规则：
 1. 若问题需要天气信息（如"北京明天天气怎么样"），调用query_weather工具，参数为城市名称；
 2. 若问题需要景点开放时间（如"故宫几点开门"），调用query_scenic_open_time工具，参数为景点名称；
-3. 若不需要工具即可回答（如"故宫是什么"），直接生成回答，无需调用工具；
-4. 工具调用格式必须严格遵循（仅输出以下两行，无任何多余内容、换行或注释）：
+3. 若不需要工具即可回答，或工具调用后无结果，**直接输出 Final Answer: 最终回答内容（无需任何Thought/Action格式）**；
+4. 工具调用格式必须严格遵循（仅输出以下三行，无任何多余内容、换行或注释）：
 Thought: 需要调用工具
-Action: 工具名（必须从{tool_names}列表中选择，如query_weather）
-Action Input: 参数（仅填字符串，如"北京"、"故宫"，无需引号）
-5. 思考过程由agent_scratchpad自动记录，你无需手动填写；每完成一次工具调用并获取结果后，立即判断是否需要继续：
-   - 若已获取足够信息，直接返回最终回答，停止迭代；
-   - 若信息不足，可再次调用工具（最多尝试5次）；
-6. 最终回答需简洁、准确，仅返回给用户的内容，不要包含思考过程、Action/Action Input等无关信息。
+Action: 工具名（必须从{tool_names}列表中选择）
+Action Input: 参数（仅填字符串，无需引号）
+5. 禁止输出假设性文本（如"假设工具返回结果为"）；最终回答需简洁、准确，仅返回给用户的内容。
+
 用户问题：{input}
-思考过程：{agent_scratchpad}
-最终回答："""
+Thought: {agent_scratchpad}
+Final Answer:"""  # 【最小修复】从「最终回答：」改为LangChain原生识别的Final Answer:
 )
 
 
@@ -154,13 +152,52 @@ def create_tourism_agent(tenant_id: str, tenant_name: str) -> AgentExecutor:
     llm = QwenLangChainLLM(tenant_id=tenant_id)
     agent = create_react_agent(llm=llm, tools=tools, prompt=prompt)
 
+    def custom_error_handler(error: Exception,  **kwargs) -> str:
+        """修复：识别纯自然语言回答场景，提取LLM有效输出"""
+        error_msg = str(error)
+        user_input_dict = kwargs.get("input", {})
+        if not user_input_dict:
+            user_input_dict = kwargs.get("run_context", {}).get("input", {})
+        query = user_input_dict.get("input", "") if isinstance(user_input_dict, dict) else str(user_input_dict)
+
+        # 场景1：混合输出错误（保留原有逻辑）
+        if "both a final answer and a parse-able action" in error_msg:
+            llm_output_start = error_msg.find("::") + 2
+            if llm_output_start > 1:
+                llm_raw_output = error_msg[llm_output_start:].strip()
+                final_answer_start = llm_raw_output.find("Final Answer:")
+                if final_answer_start != -1:
+                    final_answer = llm_raw_output[final_answer_start + len("Final Answer:"):].strip()
+                    if final_answer and "解析失败" not in final_answer:
+                        return final_answer
+
+        # 场景2：纯自然语言回答导致解析失败（新增核心修复）
+        if "Could not parse LLM output" in error_msg:
+            # 从错误信息中提取LLM的纯自然语言回答
+            llm_output_start = error_msg.find("`") + 1
+            llm_output_end = error_msg.rfind("`")
+            if llm_output_start > 0 and llm_output_end > llm_output_start:
+                llm_raw_answer = error_msg[llm_output_start:llm_output_end].strip()
+                # 仅返回有效回答（排除空值/错误关键词）
+                if llm_raw_answer and any(key in llm_raw_answer for key in ["开放时间", "门票", "免费", "全天"]):
+                    return llm_raw_answer
+
+        # 场景3：其他解析错误（通用逻辑）
+        elif "开放时间" in query or "门票" in query or "景点" in query:
+            return f"暂未查询到「{query}」的相关信息，建议确认景点名称后重试"
+        elif "天气" in query or "温度" in query:
+            return f"暂未查询到「{query}」的天气信息，建议确认城市名称后重试"
+
+        # 通用兜底（仅当无有效回答时返回）
+        return "暂无法解答你的问题，请稍后重试"
+
     # 创建Agent执行器（负责运行Agent循环）
     agent_executor = AgentExecutor(
         agent=agent,
         tools=tools,
         verbose=True,  # 调试模式，打印思考-行动-观察过程（便于排查工具调用问题）
 
-        handle_parsing_errors="工具调用格式解析失败，请检查输入",  # 仅返回错误提示，无固定内容
+        handle_parsing_errors=custom_error_handler,  # 仅返回错误提示，无固定内容
         max_iterations=3,  # 减少迭代次数，避免长时间卡住
         early_stopping_method="force",  # 全版本兼容
         return_intermediate_steps=False
@@ -178,18 +215,40 @@ async def call_tourism_agent(tenant_id: str, tenant_name: str, user_query: str) 
         agent_executor = create_tourism_agent(tenant_id, tenant_name)
         # Bug修复：改用异步ainvoke()替代同步invoke()，适配FastAPI异步环境
         result = await agent_executor.ainvoke({"input": user_query})
+        # ========== 核心修复：优先提取所有有效回答（中间步骤 > final output） ==========
+        # 1. 优先提取中间步骤中的LLM有效回答（最高优先级）
+        final_answer = ""
+        intermediate_steps = result.get("intermediate_steps", [])
+        for step in intermediate_steps:
+            # LangChain中间步骤格式：(action_object, observation_str)
+            if len(step) >= 2 and isinstance(step[1], str):
+                step_answer = step[1].strip()
+                # 过滤错误关键词，只保留正常回答
+                error_keywords = ["解析失败", "暂无法解答", "Agent stopped", "迭代上限", "参数缺失"]
+                if step_answer and not any(key in step_answer for key in error_keywords):
+                    final_answer = step_answer
+                    break  # 找到第一个有效回答就停止，避免覆盖
 
-        # 兜底：若Agent返回迭代限制提示，提取中间结果或返回默认信息
-        output = result.get("output", "")
-        if "Agent stopped due to iteration limit" in output:
-            # 手动返回兜底结果（基于业务知识）
-            return "Agent调用达到迭代上限，未获取到有效结果"
-        return output
+        # 2. 若中间步骤无有效回答，提取final output（过滤迭代提示）
+        if not final_answer:
+            output = result.get("output", "").strip()
+            # 彻底移除迭代上限提示文本
+            iteration_prompt = "Agent stopped due to iteration limit or time limit."
+            final_answer = output.replace(iteration_prompt, "").strip()
+            # 兜底：若仍为空，使用原始output
+            final_answer = final_answer or output
+
+        # 3. 最终校验：确保返回非空的有效回答
+        if not final_answer:
+            final_answer = "暂未获取到有效信息，请稍后重试"
+
+        return final_answer
+
     except Exception as e:
         error_msg = str(e) if str(e) else f"Agent调用失败（类型：{type(e).__name__}）"
         logger.error(f"文旅Agent调用失败：{error_msg}")
-        # 兜底返回业务默认结果，提升用户体验
         return f"Agent调用异常：{error_msg}；"
+
 if __name__ == "__main__":
     # 1. 包装工具（两种方式都可）
     tools = [

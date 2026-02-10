@@ -7,6 +7,9 @@ from pydantic import BaseModel
 from db.qdrant_vector_store import QdrantVectorStore
 from agent.tools.weather_tool import WeatherTool
 
+# ====================== 第7周新版 LangGraph 接口 ======================
+from agent.graph.workflow import build_tour_graph, TourGraphState
+
 from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, Dict, List
@@ -440,6 +443,52 @@ async def get_weather(city: str):
     weather_tool = WeatherTool()
     result = await weather_tool._arun(city)
     return {"city": city, "weather": result}
+
+
+
+graph = build_tour_graph()
+
+class GraphRequest(BaseModel):
+    user_query: str
+    conversation_id: Optional[str] = None
+    context: Optional[Dict] = None
+
+@app.post("/api/v2/agent/graph", tags=["LangGraph"])
+async def graph_agent(
+    request: GraphRequest,
+    tenant_info: Dict = Depends(get_current_tenant)
+):
+    state = TourGraphState(
+        user_query=request.user_query,
+        tenant_id=tenant_info["tenant_id"],
+        tenant_name=tenant_info["name"],
+        conversation_id=request.conversation_id or f"conv_{uuid.uuid4().hex[:8]}"
+    )
+
+    result = await graph.ainvoke(state.model_dump())
+
+    # 如果需要反问
+    if result.get("need_ask"):
+        return {
+            "code": 200,
+            "msg": "need_ask",
+            "data": {
+                "ask": result["ask_message"],
+                "conversation_id": state.conversation_id
+            }
+        }
+
+    return {
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "query": request.user_query,
+            "intent": result.get("intent"),
+            "city": result.get("city"),
+            "scenic": result.get("scenic_name"),
+            "answer": result.get("answer")
+        }
+    }
 
 # ====================== 9. 启动服务 ======================
 if __name__ == "__main__":

@@ -72,7 +72,23 @@ async def node_scenic(state: TourGraphState) -> Dict:
 # 节点6：调用景点时间
 # ==============================
 async def node_time(state: TourGraphState) -> Dict:
-    res = query_scenic_open_time(state.scenic_name)
+    # 1. 先调用工具（数据库查询）
+    full_scenic_name = f"{state.city}{state.scenic_name}" if (state.city and state.scenic_name) else state.scenic_name
+    res = query_scenic_open_time.invoke({"scenic_name": full_scenic_name})
+
+    # 2. 核心新增：工具查不到时，调用LLM生成结果
+    if "未查询到" in res:
+        # 构造LLM生成开放时间的prompt（通用模板，无硬编码）
+        llm_prompt = f"""
+    请回答{state.city}{state.scenic_name}的开放时间，要求：
+    1. 准确、简洁；
+    2. 不知道就说“暂未查询到{state.scenic_name}的开放时间信息”；
+    3. 仅返回回答内容，无多余文字。
+            """
+        # 调用LLM生成结果
+        res = await qwen_client.generate(llm_prompt, state.tenant_id)
+        res = res.strip() or f"暂未查询到{state.scenic_name}的开放时间信息"
+
     return {"time_info": res}
 
 # ==============================

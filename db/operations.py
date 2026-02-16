@@ -36,11 +36,13 @@ class ConversationDB:
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            # ========== 仅新增这1行：补充创建时间（用于排序） ==========
+            create_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute('''
             INSERT INTO conversations 
-            (tenant_id, agent_ids, user_query, aggregated_result, conversation_id)
-            VALUES (?, ?, ?, ?, ?)
-            ''', (tenant_id, ",".join(agent_ids), user_query, aggregated_result, conversation_id))
+            (tenant_id, agent_ids, user_query, aggregated_result, conversation_id, create_time)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''', (tenant_id, ",".join(agent_ids), user_query, aggregated_result, conversation_id, create_time))
             conn.commit()
             conn.close()
             logger.info(f"对话记录保存成功：{conversation_id}")

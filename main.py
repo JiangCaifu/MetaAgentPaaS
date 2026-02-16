@@ -475,19 +475,36 @@ async def graph_agent(
         tenant_id = str(tenant_id).strip()
         tenant_name = str(tenant_name).strip()
         conversation_id = request.conversation_id or f"conv_{uuid.uuid4().hex[:8]}"
-        # 2. 从存储加载历史记录（加锁保证线程安全）
-        async with conversation_store_lock:
-            # 初始化会话（如果不存在）
-            if conversation_id not in conversation_store:
-                conversation_store[conversation_id] = {
-                    "tenant_id": tenant_id,
-                    "history": []  # 历史记录初始化为空
-                }
-            # 校验租户权限（防止跨租户访问会话）
-            if conversation_store[conversation_id]["tenant_id"] != tenant_id:
-                raise HTTPException(status_code=403, detail="无权访问该会话")
-            # 获取历史记录
-            history = conversation_store[conversation_id]["history"]
+        # ========== 核心修改：复用get_conversations过滤历史（无新增方法） ==========
+        history = []
+        if request.conversation_id:  # 仅前端传了ID才加载历史
+            # 1. 调用现有方法：获取该租户的所有会话记录
+            all_tenant_convs = conversation_db.get_conversations(tenant_id)
+            # 2. 过滤：只保留当前conversation_id的记录
+            target_convs = [
+                conv for conv in all_tenant_convs
+                if conv["conversation_id"] == request.conversation_id
+            ]
+            # 3. 排序：按create_time升序（保证历史顺序正确）
+            target_convs_sorted = sorted(
+                target_convs,
+                key=lambda x: x["create_time"] if x["create_time"] else "",
+                reverse=False
+            )
+            # 4. 拼接成LangGraph需要的history格式
+            for conv in target_convs_sorted:
+                # 追加用户问题
+                history.append({
+                    "role": "user",
+                    "content": conv["user_query"],
+                    "timestamp": conv["create_time"]
+                })
+                # 追加助手回答/反问
+                history.append({
+                    "role": "assistant",
+                    "content": conv["aggregated_result"],
+                    "timestamp": conv["create_time"]
+                })
         state = TourGraphState(
             user_query=request.user_query,
             tenant_id=tenant_id,
@@ -498,27 +515,21 @@ async def graph_agent(
 
         result = await graph.ainvoke(state.model_dump())
 
-        # 5. 更新会话历史（记录当前交互）
-        new_history = history.copy()
-        # 记录用户当前问题
-        new_history.append({
-            "role": "user",
-            "content": request.user_query,
-            "timestamp": asyncio.get_event_loop().time()  # 时间戳（可选）
-        })
+        # ========== 关键：模型调用后必执行add_conversation（高亮） ==========
+        # 确定要保存的结果（反问内容/正常回答）
+        save_result = result["ask_message"] if result.get("need_ask") else result.get("answer", "")
+        # 执行保存（无论是否反问，都写入数据库）
+        conversation_db.add_conversation(
+            tenant_id=tenant_id,
+            agent_ids=["langgraph_tour_agent"],
+            user_query=request.user_query,
+            aggregated_result=save_result,
+            conversation_id=conversation_id
+        )
 
         # 如果需要反问
         if result.get("need_ask"):
-            # 反问场景：记录助手的反问内容
-            new_history.append({
-                "role": "assistant",
-                "content": result["ask_message"],
-                "timestamp": asyncio.get_event_loop().time()
-            })
-            # 保存更新后的历史
-            async with conversation_store_lock:
-                conversation_store[conversation_id]["history"] = new_history
-            # 返回结果（包含会话ID，供前端后续请求）
+
             return {
                 "code": 200,
                 "msg": "need_ask",
@@ -527,17 +538,6 @@ async def graph_agent(
                     "conversation_id": state.conversation_id
                 }
             }
-
-        # 正常回答场景：记录助手的回答
-        answer = result.get("answer", "")
-        new_history.append({
-                "role": "assistant",
-                "content": answer,
-                "timestamp": asyncio.get_event_loop().time()
-        })
-        # 保存更新后的历史
-        async with conversation_store_lock:
-            conversation_store[conversation_id]["history"] = new_history
 
         return {
             "code": 200,

@@ -8,7 +8,16 @@ from typing import Dict
 # 节点1：意图识别
 # ==============================
 async def node_intent(state: TourGraphState) -> Dict:
+    # 构建历史对话上下文
+    history_context = ""
+    if state.history:
+        history_lines = []
+        for msg in state.history:
+            role = "用户" if msg["role"] == "user" else "助手"
+            history_lines.append(f"{role}：{msg['content']}")
+        history_context = "\n【历史对话】\n" + "\n".join(history_lines) + "\n"
     prompt = f"""
+{history_context}
 用户问题：{state.user_query}
 判断意图，只能返回一个：
 weather / scenic / time / qa
@@ -21,7 +30,16 @@ weather / scenic / time / qa
 # 节点2：实体抽取（城市/景点）
 # ==============================
 async def node_extract_entity(state: TourGraphState) -> Dict:
+    # 构建历史对话上下文
+    history_context = ""
+    if state.history:
+        history_lines = []
+        for msg in state.history:
+            role = "用户" if msg["role"] == "user" else "助手"
+            history_lines.append(f"{role}：{msg['content']}")
+        history_context = "\n【历史对话】\n" + "\n".join(history_lines) + "\n"
     prompt = f"""
+{history_context}
 从用户问题抽取：
 城市：直接写名字，没有填空
 景点：直接写名字，没有填空

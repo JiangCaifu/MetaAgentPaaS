@@ -448,6 +448,12 @@ async def get_weather(city: str):
 
 graph = build_tour_graph()
 
+# ========== 核心：会话存储（内存版，生产环境可替换为Redis/数据库） ==========
+# 存储结构：{conversation_id: {"tenant_id": "", "history": []}}
+conversation_store: Dict[str, Dict] = {}
+# 线程安全锁（FastAPI异步环境）
+conversation_store_lock = asyncio.Lock()
+
 class GraphRequest(BaseModel):
     user_query: str
     conversation_id: Optional[str] = None
@@ -458,37 +464,96 @@ async def graph_agent(
     request: GraphRequest,
     tenant_info: Dict = Depends(get_current_tenant)
 ):
-    state = TourGraphState(
-        user_query=request.user_query,
-        tenant_id=tenant_info["tenant_id"],
-        tenant_name=tenant_info["name"],
-        conversation_id=request.conversation_id or f"conv_{uuid.uuid4().hex[:8]}"
-    )
+    try:
+        # ========== 新增：类型转换，兼容元组值 ==========
+        # 提取tenant_id，若为元组则取第一个元素，否则直接用
+        tenant_id = tenant_info["tenant_id"][0] if isinstance(tenant_info["tenant_id"], (tuple, list)) else tenant_info[
+            "tenant_id"]
+        # 提取tenant_name，同理
+        tenant_name = tenant_info["name"][0] if isinstance(tenant_info["name"], (tuple, list)) else tenant_info["name"]
+        # 确保最终是字符串（防止空值）
+        tenant_id = str(tenant_id).strip()
+        tenant_name = str(tenant_name).strip()
+        conversation_id = request.conversation_id or f"conv_{uuid.uuid4().hex[:8]}"
+        # 2. 从存储加载历史记录（加锁保证线程安全）
+        async with conversation_store_lock:
+            # 初始化会话（如果不存在）
+            if conversation_id not in conversation_store:
+                conversation_store[conversation_id] = {
+                    "tenant_id": tenant_id,
+                    "history": []  # 历史记录初始化为空
+                }
+            # 校验租户权限（防止跨租户访问会话）
+            if conversation_store[conversation_id]["tenant_id"] != tenant_id:
+                raise HTTPException(status_code=403, detail="无权访问该会话")
+            # 获取历史记录
+            history = conversation_store[conversation_id]["history"]
+        state = TourGraphState(
+            user_query=request.user_query,
+            tenant_id=tenant_id,
+            tenant_name=tenant_name,
+            conversation_id=conversation_id,
+            history=history  # 加载历史上下文
+        )
 
-    result = await graph.ainvoke(state.model_dump())
+        result = await graph.ainvoke(state.model_dump())
 
-    # 如果需要反问
-    if result.get("need_ask"):
+        # 5. 更新会话历史（记录当前交互）
+        new_history = history.copy()
+        # 记录用户当前问题
+        new_history.append({
+            "role": "user",
+            "content": request.user_query,
+            "timestamp": asyncio.get_event_loop().time()  # 时间戳（可选）
+        })
+
+        # 如果需要反问
+        if result.get("need_ask"):
+            # 反问场景：记录助手的反问内容
+            new_history.append({
+                "role": "assistant",
+                "content": result["ask_message"],
+                "timestamp": asyncio.get_event_loop().time()
+            })
+            # 保存更新后的历史
+            async with conversation_store_lock:
+                conversation_store[conversation_id]["history"] = new_history
+            # 返回结果（包含会话ID，供前端后续请求）
+            return {
+                "code": 200,
+                "msg": "need_ask",
+                "data": {
+                    "ask": result["ask_message"],
+                    "conversation_id": state.conversation_id
+                }
+            }
+
+        # 正常回答场景：记录助手的回答
+        answer = result.get("answer", "")
+        new_history.append({
+                "role": "assistant",
+                "content": answer,
+                "timestamp": asyncio.get_event_loop().time()
+        })
+        # 保存更新后的历史
+        async with conversation_store_lock:
+            conversation_store[conversation_id]["history"] = new_history
+
         return {
             "code": 200,
-            "msg": "need_ask",
+            "msg": "success",
             "data": {
-                "ask": result["ask_message"],
-                "conversation_id": state.conversation_id
+                "query": request.user_query,
+                "intent": result.get("intent"),
+                "city": result.get("city"),
+                "scenic": result.get("scenic_name"),
+                "answer": result.get("answer"),
+                "conversation_id": conversation_id  # 新增这一行
             }
         }
-
-    return {
-        "code": 200,
-        "msg": "success",
-        "data": {
-            "query": request.user_query,
-            "intent": result.get("intent"),
-            "city": result.get("city"),
-            "scenic": result.get("scenic_name"),
-            "answer": result.get("answer")
-        }
-    }
+    except Exception as e:
+        logger.error(f"GraphAgent接口调用失败：{str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"接口调用失败：{str(e)}")
 
 # ====================== 9. 启动服务 ======================
 if __name__ == "__main__":

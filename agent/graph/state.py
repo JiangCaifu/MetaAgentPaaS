@@ -17,6 +17,7 @@ class TourGraphState(BaseModel):
     scenic_name: str = ""     # 自动抽取
     need_ask: bool = False    # 是否需要反问用户
     ask_message: str = ""     # 反问内容
+    need_recommend: bool = False  # 新增：是否需要景点推荐（多Agent共享）
 
     # 工具结果
     weather_info: str = ""

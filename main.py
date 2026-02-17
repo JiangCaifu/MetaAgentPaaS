@@ -42,7 +42,21 @@ logging.basicConfig(
 #logger = logging.getLogger("MetaAgentPaaS")
 # ====================== 2. 日志初始化（优化版） ======================
 logger = setup_logger(name="MetaAgentPaaS", log_file="metaagentpaas.log")
+# ==============================
+class TourismQueryRequest(BaseModel):
+    """文旅问答请求模型"""
+    user_query: str = Field(..., description="用户查询内容")
+    tenant_id: str = Field(default="tenant_001", description="租户ID")
+    tenant_name: str = Field(default="文旅平台", description="租户名称")
+    conversation_id: str = Field(default="", description="会话ID，用于多轮对话")
+    history: Optional[List[Dict]] = Field(default_factory=list, description="历史对话记录")
 
+class TourismQueryResponse(BaseModel):
+    """文旅问答响应模型"""
+    code: int = Field(default=200, description="响应码 200成功/500失败")
+    msg: str = Field(default="success", description="响应信息")
+    data: Dict = Field(default_factory=dict, description="响应数据")
+    request_id: str = Field(default="", description="请求ID，用于问题排查")
 # ====================== 2. 核心配置（硬编码兜底，避免.env依赖） ======================
 # 租户配置（固定值，确保能匹配）
 TENANT_CONFIG: Dict[str, Dict] = {
@@ -554,6 +568,107 @@ async def graph_agent(
     except Exception as e:
         logger.error(f"GraphAgent接口调用失败：{str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"接口调用失败：{str(e)}")
+
+
+# 核心多Agent问答接口
+# ==============================
+@app.post("/api/tourism/query", summary="文旅多Agent问答接口", response_model=TourismQueryResponse)
+async def tourism_query(request: TourismQueryRequest):
+    """
+    核心接口：基于多Agent协作的文旅问答
+    - 支持意图理解→景点推荐双Agent协作
+    - 支持天气查询、景点开放时间查询、普通问答
+    - 支持租户隔离、多轮对话
+    """
+    # 生成请求ID
+    request_id = f"req_{asyncio.current_task().get_name()}_{id(request)}"
+
+    try:
+        # 1. 参数校验
+        if not request.user_query.strip():
+            raise HTTPException(status_code=400, detail="用户查询内容不能为空")
+
+        logger.info(
+            f"【多Agent请求开始】request_id={request_id}, tenant_id={request.tenant_id}, user_query={request.user_query[:50]}...")
+
+        # 2. 构建LangGraph状态
+        graph_state = TourGraphState(
+            user_query=request.user_query.strip(),
+            tenant_id=request.tenant_id,
+            tenant_name=request.tenant_name,
+            conversation_id=request.conversation_id or request_id,
+            history=request.history or []
+        )
+
+        # 3. 异步调用多Agent流程
+        result_state = await tour_graph_app.ainvoke(graph_state)
+
+        # 4. 构建响应数据
+        response_data = {
+            "user_query": result_state.user_query,
+            "intent": result_state.intent,
+            "need_recommend": getattr(result_state, "need_recommend", False),
+            "city": result_state.city,
+            "scenic_name": result_state.scenic_name,
+            "answer": result_state.answer or result_state.ask_message,
+            "weather_info": result_state.weather_info,
+            "scenic_info": result_state.scenic_info,
+            "time_info": result_state.time_info,
+            "need_ask": result_state.need_ask,
+            "ask_message": result_state.ask_message,
+            "conversation_id": result_state.conversation_id,
+            "error": result_state.error
+        }
+
+        logger.info(f"【多Agent请求完成】request_id={request_id}, answer={response_data['answer'][:50]}...")
+
+        # 5. 返回响应
+        return TourismQueryResponse(
+            code=200,
+            msg="success",
+            data=response_data,
+            request_id=request_id
+        )
+
+    except HTTPException as e:
+        # 客户端错误
+        logger.error(f"【多Agent请求失败】request_id={request_id}, 客户端错误：{e.detail}")
+        return TourismQueryResponse(
+            code=e.status_code,
+            msg=f"error: {e.detail}",
+            data={},
+            request_id=request_id
+        )
+
+    except Exception as e:
+        # 服务器错误
+        error_msg = str(e)
+        logger.error(f"【多Agent请求失败】request_id={request_id}, 服务器错误：{error_msg}", exc_info=True)
+        return TourismQueryResponse(
+            code=500,
+            msg=f"服务器内部错误：{error_msg[:100]}",
+            data={},
+            request_id=request_id
+        )
+
+
+# 专用景点推荐接口（简化版）
+# ==============================
+@app.post("/api/tourism/recommend", summary="景点推荐专用接口", response_model=TourismQueryResponse)
+async def tourism_recommend(request: TourismQueryRequest):
+    """
+    专用接口：仅处理景点推荐请求（简化版）
+    直接触发意图理解→景点推荐双Agent流程
+    """
+    # 包装用户查询，确保触发景点推荐意图
+    enhanced_query = f"推荐{request.user_query}的景点，要求简洁实用，列出3-5个核心景点"
+    request.user_query =enhanced_query
+
+    # 复用核心问答接口逻辑
+    return await tourism_query(request)
+
+# ==============================
+# 启动配置
 
 # ====================== 9. 启动服务 ======================
 if __name__ == "__main__":

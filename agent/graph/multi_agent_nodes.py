@@ -22,6 +22,13 @@ async def intent_agent(state: TourGraphState) -> Dict:
     if state.history:
         history_lines = []
         for msg in state.history:
+            # ========== 新增：容错处理（核心修复） ==========
+            # 1. 跳过空消息/格式错误的消息
+            if not isinstance(msg, dict):
+                continue
+            # 2. 检查是否有role和content字段，没有则跳过
+            if "role" not in msg or "content" not in msg:
+                continue
             role = "用户" if msg["role"] == "user" else "助手"
             history_lines.append(f"{role}：{msg['content']}")
         history_context = "\n【历史对话】\n" + "\n".join(history_lines) + "\n"

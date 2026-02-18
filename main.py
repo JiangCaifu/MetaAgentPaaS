@@ -569,7 +569,7 @@ async def graph_agent(
         logger.error(f"GraphAgent接口调用失败：{str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"接口调用失败：{str(e)}")
 
-
+tour_graph_app = build_tour_graph()
 # 核心多Agent问答接口
 # ==============================
 @app.post("/api/tourism/query", summary="文旅多Agent问答接口", response_model=TourismQueryResponse)
@@ -605,23 +605,22 @@ async def tourism_query(request: TourismQueryRequest):
 
         # 4. 构建响应数据
         response_data = {
-            "user_query": result_state.user_query,
-            "intent": result_state.intent,
-            "need_recommend": getattr(result_state, "need_recommend", False),
-            "city": result_state.city,
-            "scenic_name": result_state.scenic_name,
-            "answer": result_state.answer or result_state.ask_message,
-            "weather_info": result_state.weather_info,
-            "scenic_info": result_state.scenic_info,
-            "time_info": result_state.time_info,
-            "need_ask": result_state.need_ask,
-            "ask_message": result_state.ask_message,
-            "conversation_id": result_state.conversation_id,
-            "error": result_state.error
+            "user_query": result_state["user_query"],  # 原：result_state.user_query
+    "intent": result_state["intent"],          # 原：result_state.intent
+    "need_recommend": result_state.get("need_recommend", False),  # 原：getattr(...)
+    "city": result_state["city"],              # 原：result_state.city
+    "scenic_name": result_state["scenic_name"],# 原：result_state.scenic_name
+    "answer": result_state.get("answer") or result_state.get("ask_message"),  # 原：result_state.answer or ...
+    "weather_info": result_state["weather_info"],  # 原：result_state.weather_info
+    "scenic_info": result_state["scenic_info"],    # 原：result_state.scenic_info
+    "time_info": result_state["time_info"],        # 原：result_state.time_info
+    "need_ask": result_state["need_ask"],          # 原：result_state.need_ask
+    "ask_message": result_state["ask_message"],    # 原：result_state.ask_message
+    "conversation_id": result_state["conversation_id"],  # 原：result_state.conversation_id
+    "error": result_state.get("error", "")         # 原：result_state.error
         }
 
         logger.info(f"【多Agent请求完成】request_id={request_id}, answer={response_data['answer'][:50]}...")
-
         # 5. 返回响应
         return TourismQueryResponse(
             code=200,

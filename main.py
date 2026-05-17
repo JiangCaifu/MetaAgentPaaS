@@ -751,6 +751,124 @@ async def get_city_relics(city_name: str):
         "data": {"city": city_name, "relics": relics}
     }
 
+# ==========================
+# 第10周新增：RAG+知识图谱双增强接口
+# ==========================
+class RAGQueryRequest(BaseModel):
+    """RAG查询请求模型"""
+    query: str = Field(..., description="用户查询")
+    include_evaluation: bool = Field(default=False, description="是否包含评估结果")
+
+@app.post("/api/v2/rag/kg/qa", tags=["第10周任务"], summary="双增强RAG问答（知识图谱+向量）")
+async def dual_rag_qa(request: RAGQueryRequest):
+    """
+    双增强RAG问答接口（第10周核心任务）
+    - 知识图谱结构化检索 + 向量文本检索
+    - 支持过滤、去重、重排优化
+    - 可选评估功能
+    
+    流程：
+    1. 知识图谱检索 → 获取结构化数据（景点、交通、推荐）
+    2. 向量检索 → 获取文本参考资料
+    3. 过滤去重 → 清理低质量结果
+    4. 重排优化 → 提升相关性
+    5. 大模型生成 → 整合双源信息
+    """
+    try:
+        from agent.graph.dual_rag_qa import dual_enhance_qa
+        
+        result = await dual_enhance_qa(request.query)
+        
+        # 是否需要评估
+        if request.include_evaluation:
+            from agent.graph.rag_evaluate import RagasEvaluator
+            
+            evaluator = RagasEvaluator()
+            contexts = []
+            if result["kg_knowledge"]:
+                contexts.append(result["kg_knowledge"])
+            if result["vector_reference"]:
+                contexts.append(result["vector_reference"])
+            
+            evaluation = evaluator.evaluate_single(
+                question=result["question"],
+                answer=result["answer"],
+                contexts=contexts
+            )
+            result["evaluation"] = evaluation
+        
+        return {
+            "code": 200,
+            "msg": "success",
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"双增强RAG问答失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"双增强RAG问答失败：{str(e)}")
+
+@app.post("/api/v2/rag/kg/evaluate", tags=["第10周任务"], summary="RAG效果批量评估（Ragas）")
+async def ragas_evaluate(request: dict = {}):
+    """
+    RAG效果批量评估接口（第10周核心任务）
+    - 使用Ragas风格评估指标：faithfulness、relevancy、precision、recall
+    - 生成评估报告并保存到文件
+    """
+    try:
+        from agent.graph.rag_evaluate import run_rag_evaluation
+        
+        # 获取测试查询列表
+        test_samples = request.get("samples", None)
+        
+        result = await run_rag_evaluation(test_samples)
+        
+        return {
+            "code": 200,
+            "msg": "success",
+            "data": {
+                "total_samples": result["total_samples"],
+                "average_scores": result["average"],
+                "grade": result["grade"],
+                "report_file": "ragas_evaluation_report.txt"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Ragas评估失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ragas评估失败：{str(e)}")
+
+@app.get("/api/v2/rag/kg/config", tags=["第10周任务"], summary="获取RAG配置信息")
+async def get_rag_config():
+    """
+    获取RAG服务配置信息
+    """
+    return {
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "description": "双增强RAG问答服务（知识图谱+向量检索）",
+            "version": "1.0.0",
+            "modules": {
+                "kg_connect": "知识图谱检索模块（NetworkX版）",
+                "vector_rag": "向量文本检索模块（Qdrant）",
+                "rerank_filter": "检索重排与过滤模块",
+                "dual_rag_qa": "双增强问答核心模块",
+                "rag_evaluate": "Ragas效果评估模块"
+            },
+            "features": [
+                "知识图谱结构化检索（景点、交通、推荐、文物）",
+                "向量文本语义检索",
+                "无用文档过滤",
+                "检索结果重排",
+                "文档去重",
+                "Ragas指标评估（faithfulness、relevancy、precision、recall）"
+            ],
+            "endpoints": [
+                "POST /api/v2/rag/kg/qa - 双增强问答",
+                "POST /api/v2/rag/kg/evaluate - Ragas评估",
+                "GET /api/v2/rag/kg/config - 获取配置"
+            ]
+        }
+    }
+
 # ==============================
 # 启动配置
 

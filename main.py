@@ -6,6 +6,25 @@ import json
 from pydantic import BaseModel
 from db.qdrant_vector_store import QdrantVectorStore
 from agent.tools.weather_tool import WeatherTool
+# 新增：导入图谱服务
+# 知识图谱服务（NetworkX版，纯Python实现）
+_kg_service = None
+
+def get_kg_service():
+    """懒加载知识图谱服务（NetworkX版，无需Neo4j）"""
+    global _kg_service
+    if _kg_service is None:
+        try:
+            from agent.graph.kg_service import TourismKnowledgeGraph
+            _kg_service = TourismKnowledgeGraph()
+            logger.info("✅ 知识图谱服务初始化成功（NetworkX版）")
+        except Exception as e:
+            logger.warning(f"⚠️ 知识图谱服务初始化失败：{str(e)}")
+            _kg_service = None
+    return _kg_service
+from agent.graph.state import TourGraphState
+from agent.graph.workflow import build_tour_graph
+from utils.logger_config import setup_logger
 
 # ====================== 第7周新版 LangGraph 接口 ======================
 from agent.graph.workflow import build_tour_graph, TourGraphState
@@ -665,6 +684,72 @@ async def tourism_recommend(request: TourismQueryRequest):
 
     # 复用核心问答接口逻辑
     return await tourism_query(request)
+# ==========================
+# 新增：知识图谱专用接口（第9周学习任务）
+# ==========================
+@app.get("/api/kg/city/{city_name}", summary="查询城市景点（知识图谱）")
+async def get_city_spots(city_name: str):
+    """直接调用知识图谱查询指定城市的景点（NetworkX版）"""
+    kg_service = get_kg_service()
+    if not kg_service:
+        raise HTTPException(status_code=503, detail="知识图谱服务未初始化")
+    
+    spots = kg_service.get_city_scenic_spots(city_name)
+    if not spots:
+        raise HTTPException(status_code=404, detail=f"未查询到{city_name}的景点数据")
+    return {
+        "code": 200,
+        "msg": "success",
+        "data": {"city": city_name, "spots": spots}
+    }
+
+@app.get("/api/kg/scenic/{spot_name}/traffic", summary="查询景点交通信息（知识图谱）")
+async def get_scenic_traffic(spot_name: str):
+    """查询指定景点的交通信息（NetworkX版）"""
+    kg_service = get_kg_service()
+    if not kg_service:
+        raise HTTPException(status_code=503, detail="知识图谱服务未初始化")
+    
+    traffic = kg_service.get_scenic_traffic(spot_name)
+    if not traffic:
+        raise HTTPException(status_code=404, detail=f"未查询到{spot_name}的交通信息")
+    return {
+        "code": 200,
+        "msg": "success",
+        "data": {"spot": spot_name, "traffic": traffic}
+    }
+
+@app.get("/api/kg/scenic/{spot_name}/recommend", summary="查询景点推荐（知识图谱）")
+async def get_scenic_recommend(spot_name: str):
+    """查询与指定景点联动推荐的其他景点（NetworkX版）"""
+    kg_service = get_kg_service()
+    if not kg_service:
+        raise HTTPException(status_code=503, detail="知识图谱服务未初始化")
+    
+    recommends = kg_service.get_recommend_spots(spot_name)
+    if not recommends:
+        raise HTTPException(status_code=404, detail=f"未查询到{spot_name}的推荐景点")
+    return {
+        "code": 200,
+        "msg": "success",
+        "data": {"spot": spot_name, "recommendations": recommends}
+    }
+
+@app.get("/api/kg/city/{city_name}/relics", summary="查询城市文物收藏（知识图谱）")
+async def get_city_relics(city_name: str):
+    """查询指定城市的文物收藏信息（NetworkX版）"""
+    kg_service = get_kg_service()
+    if not kg_service:
+        raise HTTPException(status_code=503, detail="知识图谱服务未初始化")
+    
+    relics = kg_service.get_city_cultural_relics(city_name)
+    if not relics:
+        raise HTTPException(status_code=404, detail=f"未查询到{city_name}的文物信息")
+    return {
+        "code": 200,
+        "msg": "success",
+        "data": {"city": city_name, "relics": relics}
+    }
 
 # ==============================
 # 启动配置

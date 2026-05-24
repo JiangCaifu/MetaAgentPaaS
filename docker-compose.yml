@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # ========== FastAPI 主服务 ==========
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: metaagentpaas-app
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - NEO4J_HOST=neo4j
+      - NEO4J_PORT=7687
+      - LOG_LEVEL=INFO
+    depends_on:
+      - qdrant
+      - neo4j
+    volumes:
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # ========== Qdrant 向量数据库 ==========
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: metaagentpaas-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ========== Neo4J 知识图谱数据库 ==========
+  neo4j:
+    image: neo4j:5.23.0
+    container_name: metaagentpaas-neo4j
+    ports:
+      - "7474:7474"   # HTTP 管理界面
+      - "7687:7687"   # Bolt 协议
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/import
+      - neo4j_plugins:/plugins
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_MEMORY_HEAP_MAX_SIZE=2G
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7474"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+# ========== 数据卷配置 ==========
+volumes:
+  qdrant_data:
+    driver: local
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  neo4j_import:
+    driver: local
+  neo4j_plugins:
+    driver: local
+
+# ========== 网络配置 ==========
+networks:
+  agent-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

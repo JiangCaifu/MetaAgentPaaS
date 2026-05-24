@@ -261,6 +261,19 @@ app = FastAPI(
     version="2.0.0"
 )
 
+# ====================== 第11周新增：日志中间件 ======================
+# 导入并添加日志中间件
+try:
+    from agent.utils.log_middleware import LogMiddleware
+    from agent.utils.logging_config import setup_logging, agent_logger
+    
+    # 初始化日志系统
+    setup_logging("INFO")
+    app.add_middleware(LogMiddleware)
+    logger.info("✅ 第11周日志中间件加载成功")
+except Exception as e:
+    logger.warning(f"⚠️ 日志中间件加载失败：{str(e)}")
+
 
 # ====================== 7. 健康检查接口 ======================
 @app.get("/health", tags=["基础接口"])

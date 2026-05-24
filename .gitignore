@@ -18,3 +18,7 @@ venv/
 *embedding*.json
 *data*.json
 *result*.json
+# 评估报告目录（自动生成的报告文件）
+reports/
+# 向量数据库数据目录
+local_qdrant_data/

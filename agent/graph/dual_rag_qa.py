@@ -16,23 +16,35 @@ logger = logging.getLogger("DualRAGQA")
 kg_retriever = TourismKGRetriever()
 
 QA_PROMPT = """
-结合知识图谱结构化信息 + 文本知识库内容回答用户文旅问题
+【任务】基于提供的知识图谱数据和文本参考资料，准确回答用户的文旅问题。
 
-知识图谱结构化数据：
+【知识图谱数据】
 {kg_info}
 
-文本参考资料：
+【文本参考资料】
 {vec_context}
 
-用户问题：{question}
+【用户问题】{question}
 
-回答要求：
-1. 优先使用知识图谱中的真实数据（如开放时间、票价、交通信息）
-2. 用文本内容补充完善答案，提供更丰富的背景信息
-3. 回答简洁准确，分点清晰
-4. 如果没有找到相关信息，请明确说明
+【严格要求】
+1. 🔍 事实核查：回答必须基于上述提供的知识图谱数据和文本参考资料
+2. ❌ 禁止编造：如果资料中没有相关信息，请明确说明"暂无相关信息"
+3. 📋 优先使用结构化数据：知识图谱中的开放时间、票价、交通信息具有最高权威性
+4. 📝 引用来源：如果使用了文本资料中的信息，可简要说明来源
+5. 🎯 精准回答：直接回答问题，不要添加无关内容
+6. 📊 结构化输出：使用清晰的格式（如分点、加粗标题）
 
-回答：
+【回答示例】
+问：故宫的开放时间是什么时候？
+答：故宫的开放时间是08:30-17:00，票价60元。
+
+问：上海有什么好玩的地方？
+答：上海的著名景点包括：
+- 外滩：全天开放，免费
+- 豫园：开放时间08:30-17:00，票价40元
+- 东方明珠：开放时间09:00-21:30，票价199元
+
+【回答】
 """
 
 def classify_query(query: str) -> str:
@@ -164,11 +176,11 @@ async def dual_enhance_qa(question: str, include_optimization: bool = True) -> D
     # 1. 知识图谱结构化检索
     kg_ctx = kg_retriever.get_kg_context(question)
     
-    # 2. 向量文本检索
-    vec_docs = vector_retrieve(question, top_k=5)
+    # 2. 向量文本检索（增加top_k获取更多候选文档）
+    vec_docs = vector_retrieve(question, top_k=8)
     
-    # 3. 过滤+去重+重排优化
-    vec_docs = optimize_retrieval_results(question, vec_docs, top_n=4)
+    # 3. 过滤+去重+重排优化（保留更多优质结果）
+    vec_docs = optimize_retrieval_results(question, vec_docs, top_n=5)
     
     # 4. 语义分块（可选优化）
     if include_optimization:

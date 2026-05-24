@@ -9,11 +9,11 @@ DB_PATH = "./local_qdrant_data"
 COLLECTION_NAME = "test_collection"
 
 def init_vector_db() -> QdrantVectorStore:
-    """初始化文旅向量知识库"""
+    """初始化文旅向量知识库（百炼Embedding返回768维向量）"""
     return QdrantVectorStore(
         collection_name=COLLECTION_NAME,
         path=DB_PATH,
-        vector_dimension=1024
+        vector_dimension=768
     )
 
 def vector_retrieve(query: str, top_k: int = 5) -> List[Dict]:

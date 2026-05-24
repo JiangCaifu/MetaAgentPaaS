@@ -11,42 +11,40 @@ import json
 load_dotenv()
 
 
-# ---------------- 替换为你已实现的 Embedding 函数 ----------------
-def your_embedding_function(texts: List[str]) :
+# ---------------- Embedding 函数实现 ----------------
+# 全局Embedding客户端实例
+_embedding_client = None
+
+def get_embedding_client():
+    """懒加载Embedding客户端"""
+    global _embedding_client
+    if _embedding_client is None:
+        _embedding_client = BailianEmbeddingClient()
+    return _embedding_client
+
+def your_embedding_function(texts: List[str]) -> List[List[float]]:
     """
-    调用你已完成的 Embedding API，生成文本向量
+    调用百炼Embedding API，生成文本向量
     :param texts: 分块后的文本列表
-    :return: 向量列表，每个向量维度需和 Qdrant 集合配置一致
+    :return: 向量列表，每个向量维度为768
     """
-    # 此处替换为你的实际 Embedding API 调用代码
-    # 示例（伪代码）：
-    # import requests
-    # api_key = os.getenv("EMBEDDING_API_KEY")
-    # response = requests.post(
-    #     url="https://your-embedding-api.com/embeddings",
-    #     headers={"Authorization": f"Bearer {api_key}"},
-    #     json={"texts": texts}
-    # )
-    # return response.json()["embeddings"]
-    try:
-        client = BailianEmbeddingClient()
-        vectors = []
-        # 遍历传入的 texts 列表，逐个生成向量（匹配文本列表长度）
-        for text in texts:
-            # 使用 get_embedding 方法（处理单个文本字符串，非文件路径）
-            vector = client.get_embedding(text.strip())  # 你的原有方法，正确处理文本
+    client = get_embedding_client()
+    vectors = []
+    for text in texts:
+        try:
+            vector = client.get_embedding(text)
             vectors.append(vector)
-        # 返回向量列表（必须与 texts 长度一致）
-        return vectors
-    except Exception as e:
-        raise Exception(f"向量化失败：{str(e)}")
+        except Exception as e:
+            logger.error(f"文本向量化失败：{str(e)}")
+            vectors.append([])
+    return vectors
 
 
 class QdrantVectorStore:
     def __init__(
             self,
             collection_name: str = "meta_agent_paas_cultural_tourism",
-            vector_dimension: int = 1024,  # 根据你的 Embedding 模型调整（如通义是 768）
+            vector_dimension: int = 768,  # 百炼Embedding返回768维向量
             distance: Distance = Distance.COSINE,  # 向量相似度计算方式：余弦相似度
             host: str = "localhost",
             port: int = 6333,
@@ -138,6 +136,9 @@ class QdrantVectorStore:
         try:
             # 1. 生成查询向量
             query_vector = your_embedding_function([query_text])[0]
+            if not query_vector:
+                print("警告：查询向量为空")
+                return []
 
             # 2. Qdrant 向量检索
             search_result = self.client.query_points(
@@ -147,21 +148,39 @@ class QdrantVectorStore:
                 with_payload=True  # 返回 payload 中的内容和元数据
             )
 
-            #if isinstance(search_result, tuple):
-                #search_result = search_result[0]  # 仅新增这1行解析逻辑
-            #print("results类型：", type(search_result))
-            print("results值：", search_result)
-            # 3. 格式化结果
+            # 3. 处理不同版本的Qdrant返回格式
+            points = []
+            if hasattr(search_result, 'points'):
+                points = search_result.points
+            elif isinstance(search_result, tuple) and len(search_result) > 0:
+                # 兼容旧版本API
+                points = search_result[0]
+            elif isinstance(search_result, list):
+                points = search_result
+            
+            # 4. 格式化结果
             formatted_results = []
-            for res in search_result.points:
-                formatted_results.append({
-                    "score": res.score,  # 相似度分数（余弦相似度 0-1）
-                    "content": res.payload["content"],
-                    "metadata": res.payload["metadata"]
-                })
+            for res in points:
+                if hasattr(res, 'score') and hasattr(res, 'payload'):
+                    formatted_results.append({
+                        "score": res.score,  # 相似度分数（余弦相似度 0-1）
+                        "content": res.payload.get("content", ""),
+                        "metadata": res.payload.get("metadata", {})
+                    })
+                elif isinstance(res, dict):
+                    # 兼容字典格式
+                    formatted_results.append({
+                        "score": res.get("score", 0),
+                        "content": res.get("content", ""),
+                        "metadata": res.get("metadata", {})
+                    })
+            
+            print(f"检索到 {len(formatted_results)} 条结果")
             return formatted_results
         except Exception as e:
             print(f"检索失败：{str(e)}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def close(self):

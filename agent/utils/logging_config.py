@@ -7,6 +7,9 @@ import logging.handlers
 import os
 from datetime import datetime
 
+# 全局日志记录器实例（在模块加载时就初始化）
+_global_logger = None
+
 def setup_logging(log_level: str = "INFO") -> logging.Logger:
     """
     配置项目日志系统
@@ -71,7 +74,8 @@ class AgentLogger:
     """
     
     def __init__(self, name: str = "Agent"):
-        self.logger = logging.getLogger(f"AgentLog.{name}")
+        # 直接使用主记录器，确保日志能正确输出
+        self.logger = logging.getLogger("AgentLog")
     
     def log_llm_call(self, prompt: str, response: str, duration: float = 0.0, tokens: int = 0):
         """
@@ -149,6 +153,3 @@ class AgentLogger:
 
 # 全局日志记录器实例
 agent_logger = AgentLogger()
-```
-
-</function></seed:tool_call>

@@ -4,6 +4,19 @@ import os
 import uuid
 import json
 from pydantic import BaseModel
+
+# 第11周新增：在最开始初始化日志系统
+try:
+    from agent.utils.logging_config import setup_logging, agent_logger
+    setup_logging("INFO")
+    logger = logging.getLogger("AgentLog")
+    logger.info("✅ 第11周日志系统初始化成功")
+except Exception as e:
+    # 如果日志系统初始化失败，使用默认日志
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("AgentLog")
+    logger.warning(f"⚠️ 日志系统初始化失败，使用默认配置：{str(e)}")
+
 from db.qdrant_vector_store import QdrantVectorStore
 from agent.tools.weather_tool import WeatherTool
 # 新增：导入图谱服务
@@ -262,13 +275,8 @@ app = FastAPI(
 )
 
 # ====================== 第11周新增：日志中间件 ======================
-# 导入并添加日志中间件
 try:
     from agent.utils.log_middleware import LogMiddleware
-    from agent.utils.logging_config import setup_logging, agent_logger
-    
-    # 初始化日志系统
-    setup_logging("INFO")
     app.add_middleware(LogMiddleware)
     logger.info("✅ 第11周日志中间件加载成功")
 except Exception as e:

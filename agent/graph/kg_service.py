@@ -128,7 +128,6 @@ class TourismKnowledgeGraph:
             
             # 景点-收藏-文物
             ("故宫", "清明上河图", "HOUSES"),
-            ("八达岭长城", "兵马俑", "NEAR"),
         ]
         
         # 添加关系

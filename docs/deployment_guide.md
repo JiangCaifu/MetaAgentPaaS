@@ -175,14 +175,12 @@ sudo apt install git curl -y
 # 更新系统
 sudo yum update -y
 
-# 安装 Docker
-curl -fsSL https://get.docker.com | sh
+# 安装 Docker（使用系统仓库，推荐）
+sudo dnf install docker docker-compose git curl -y
 
-# 安装 Docker Compose
-sudo yum install docker-compose-plugin -y
-
-# 安装 Git 和 curl
-sudo yum install git curl -y
+# 启动 Docker 服务
+sudo systemctl start docker
+sudo systemctl enable docker
 ```
 
 ### 4.2 代码部署

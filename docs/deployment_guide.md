@@ -292,7 +292,70 @@ git pull
 docker-compose up -d --build
 ```
 
-### 6.2 日志查看
+### 6.2 代码更新后重新部署
+
+当本地代码修改并推送到 Git 后，需要在服务器上重新部署。
+
+#### 场景A：仅修改业务代码（不需要重新安装依赖）
+
+```bash
+cd /root/MetaAgentPaaS/
+
+# 拉取最新代码
+git pull
+
+# 重新构建并启动（利用缓存，速度较快）
+docker-compose up -d --build
+
+# 查看状态
+docker-compose ps -a
+```
+
+#### 场景B：修改了 requirements.txt（需要重新安装依赖）
+
+```bash
+cd /root/MetaAgentPaaS/
+
+# 拉取最新代码
+git pull
+
+# 停止旧服务
+docker-compose down
+
+# 重新构建镜像（不使用缓存，确保依赖更新）
+docker-compose build --no-cache
+
+# 启动服务
+docker-compose up -d
+
+# 查看状态
+docker-compose ps -a
+
+# 查看日志确认启动成功
+docker-compose logs app
+
+# 清理旧镜像（释放磁盘空间）
+docker system prune -a
+```
+
+#### 场景C：git pull 失败（服务器无法访问 GitHub）
+
+国内服务器访问 GitHub 不稳定，如果 `git pull` 失败，使用 Xftp 上传修改的文件：
+
+1. 用 Xftp 连接服务器
+2. 将本地修改的文件上传到 `/root/MetaAgentPaaS/` 对应位置
+3. 在服务器上重新构建：
+
+```bash
+cd /root/MetaAgentPaaS/
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+> **提示**：也可以配置 GitHub 加速镜像：`git remote set-url origin https://ghproxy.com/https://github.com/用户名/项目名.git`
+
+### 6.3 日志查看
 
 ```bash
 # 查看所有服务日志

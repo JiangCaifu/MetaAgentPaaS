@@ -645,19 +645,19 @@ async def tourism_query(request: TourismQueryRequest):
 
         # 4. 构建响应数据
         response_data = {
-            "user_query": result_state["user_query"],  # 原：result_state.user_query
-    "intent": result_state["intent"],          # 原：result_state.intent
-    "need_recommend": result_state.get("need_recommend", False),  # 原：getattr(...)
-    "city": result_state["city"],              # 原：result_state.city
-    "scenic_name": result_state["scenic_name"],# 原：result_state.scenic_name
-    "answer": result_state.get("answer") or result_state.get("ask_message"),  # 原：result_state.answer or ...
-    "weather_info": result_state["weather_info"],  # 原：result_state.weather_info
-    "scenic_info": result_state["scenic_info"],    # 原：result_state.scenic_info
-    "time_info": result_state["time_info"],        # 原：result_state.time_info
-    "need_ask": result_state["need_ask"],          # 原：result_state.need_ask
-    "ask_message": result_state["ask_message"],    # 原：result_state.ask_message
-    "conversation_id": result_state["conversation_id"],  # 原：result_state.conversation_id
-    "error": result_state.get("error", "")         # 原：result_state.error
+            "user_query": result_state.get("user_query", ""),
+            "intent": result_state.get("intent", ""),
+            "need_recommend": result_state.get("need_recommend", False),
+            "city": result_state.get("city", ""),
+            "scenic_name": result_state.get("scenic_name", ""),
+            "answer": result_state.get("answer") or result_state.get("ask_message", ""),
+            "weather_info": result_state.get("weather_info", ""),
+            "scenic_info": result_state.get("scenic_info", ""),
+            "time_info": result_state.get("time_info", ""),
+            "need_ask": result_state.get("need_ask", False),
+            "ask_message": result_state.get("ask_message", ""),
+            "conversation_id": result_state.get("conversation_id", ""),
+            "error": result_state.get("error", "")
         }
 
         logger.info(f"【多Agent请求完成】request_id={request_id}, answer={response_data['answer'][:50]}...")

@@ -282,6 +282,14 @@ try:
 except Exception as e:
     logger.warning(f"⚠️ 日志中间件加载失败：{str(e)}")
 
+# ====================== 云资源管理路由 ======================
+try:
+    from cloud.api import router as cloud_router
+    app.include_router(cloud_router)
+    logger.info("✅ 云资源管理API加载成功")
+except Exception as e:
+    logger.warning(f"⚠️ 云资源管理API加载失败：{str(e)}")
+
 
 # ====================== 7. 健康检查接口 ======================
 @app.get("/health", tags=["基础接口"])

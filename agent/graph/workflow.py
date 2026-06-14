@@ -58,7 +58,7 @@ def build_tour_graph():
     # ==============================
     # 5. 原有流程分支（封装为子路由）
 
-    # 路由：根据意图走不同工具
+    # 路由：根据意图走不同工具（条件路由函数，返回节点名字符串）
     def original_router(state: TourGraphState):
         if state.need_ask:
             return END
@@ -69,15 +69,18 @@ def build_tour_graph():
         if state.intent == "time":
             return "time"
         return "qa"
-    # ========== 仅新增这1行：注册original_router节点（核心修复） ==========
-    w.add_node("original_router", original_router)
+
+    # 节点函数：中转节点，不做状态修改（节点函数必须返回dict）
+    def original_router_node(state: TourGraphState):
+        return {}
+
+    w.add_node("original_router", original_router_node)
 
     w.add_conditional_edges("original_router", original_router, {
         "weather": "weather",
         "scenic": "scenic",
         "time": "time",
         "qa": "qa",
-        #END: END
     })
 
     # 工具执行完 → 汇总

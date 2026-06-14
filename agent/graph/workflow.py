@@ -8,7 +8,7 @@ def build_tour_graph():
     w = StateGraph(TourGraphState)
 
     # 节点
-    w.add_node("intent", node_intent)
+    w.add_node("detect_intent", node_intent)
     w.add_node("extract", node_extract_entity)
     w.add_node("check", node_check_info)
     w.add_node("weather", node_weather)

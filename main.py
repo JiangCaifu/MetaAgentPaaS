@@ -290,6 +290,14 @@ try:
 except Exception as e:
     logger.warning(f"⚠️ 云资源管理API加载失败：{str(e)}")
 
+# ====================== 多模态问答路由 ======================
+try:
+    from multimodal.api import router as multimodal_router
+    app.include_router(multimodal_router)
+    logger.info("✅ 多模态问答API加载成功")
+except Exception as e:
+    logger.warning(f"⚠️ 多模态问答API加载失败：{str(e)}")
+
 
 # ====================== 7. 健康检查接口 ======================
 @app.get("/health", tags=["基础接口"])

@@ -320,6 +320,29 @@ df -h
 free -h
 ```
 
+### 6.4 Docker 磁盘清理
+
+每次 `git pull + build` 会产生旧镜像和构建缓存，长期不清理会占用大量磁盘空间。
+
+```bash
+# 查看 Docker 磁盘占用
+docker system df
+
+# 一键清理所有未使用资源（旧镜像、停止的容器、构建缓存、未使用网络）
+docker system prune -a
+
+# 只清理悬空镜像（没有标签的旧镜像，最安全）
+docker image prune
+
+# 只清理构建缓存
+docker builder prune
+
+# 只清理停止的容器
+docker container prune
+```
+
+**建议**：每次更新部署后执行 `docker system prune -a` 清理旧资源，避免磁盘被占满。
+
 ---
 
 ## 7. 常见问题排查
@@ -367,6 +390,113 @@ sudo systemctl restart docker
 # 查看Docker状态
 sudo systemctl status docker
 ```
+
+### 7.5 Docker镜像拉取失败
+
+**问题现象**：`docker pull` 或 `docker-compose up` 时报错 `no such host`、`502 Bad Gateway`、`Connection timed out` 等。
+
+**原因**：国内服务器访问 Docker Hub 网络不稳定，需要配置镜像加速器和 DNS。
+
+**解决方案**：
+
+#### 步骤1：配置 Docker 镜像加速器和 DNS
+
+```bash
+# 编辑 Docker 配置文件
+cat > /etc/docker/daemon.json << EOF
+{
+  "dns": ["8.8.8.8", "114.114.114.114"],
+  "registry-mirrors": [
+    "https://mirror.ccs.tencentyun.com"
+  ]
+}
+EOF
+
+# 重启 Docker 服务
+sudo systemctl restart docker
+```
+
+#### 步骤2：选择合适的镜像源
+
+| 云服务商 | 镜像源地址 | 说明 |
+|----------|-----------|------|
+| **腾讯云** | `https://mirror.ccs.tencentyun.com` | 腾讯云服务器推荐，走内网通道 |
+| 网易 | `https://hub-mirror.c.163.com` | 备选 |
+| 百度 | `https://mirror.baidubce.com` | 备选 |
+| 中国官方 | `https://registry.docker-cn.com` | 备选 |
+
+> **提示**：腾讯云服务器优先使用腾讯云镜像源，内网传输速度最快最稳定。
+
+#### 步骤3：修复 DNS 解析问题
+
+如果镜像源域名无法解析（`no such host`），需要配置系统 DNS：
+
+```bash
+# 修改系统 DNS 配置
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+echo "nameserver 114.114.114.114" >> /etc/resolv.conf
+
+# 重启网络服务（OpenCloudOS）
+sudo systemctl restart NetworkManager
+
+# 验证 DNS 解析
+ping www.baidu.com -c 3
+```
+
+#### 步骤4：手动拉取镜像
+
+如果 `docker-compose up` 仍然失败，可以逐个拉取镜像：
+
+```bash
+# 逐个拉取镜像
+docker pull qdrant/qdrant:latest
+docker pull neo4j:5.23.0
+
+# 拉取完成后再启动服务
+docker-compose up -d
+```
+
+#### 步骤5：不使用镜像源直接拉取
+
+如果所有镜像源都不可用，可以清空镜像配置，直接访问 Docker Hub：
+
+```bash
+cat > /etc/docker/daemon.json << EOF
+{
+  "dns": ["8.8.8.8", "114.114.114.114"]
+}
+EOF
+
+sudo systemctl restart docker
+docker-compose up -d
+```
+
+### 7.6 docker-compose Bus Error
+
+**问题现象**：执行 `docker-compose up -d` 时报 `Bus error (core dumped)`。
+
+**原因**：系统安装的 docker-compose 二进制文件与系统不兼容。
+
+**解决方案**：手动安装 Docker Compose：
+
+```bash
+# 卸载旧版本
+sudo dnf remove docker-compose -y
+
+# 手动下载 Docker Compose 二进制文件
+curl -SL https://github.com/docker/compose/releases/download/v2.24.6/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
+
+# 添加执行权限
+chmod +x /usr/local/bin/docker-compose
+
+# 验证安装
+docker-compose --version
+
+# 启动服务
+docker-compose up -d
+```
+
+> **提示**：也可以使用 `docker compose`（Docker Compose v2 插件）替代 `docker-compose`，两者功能相同。
 
 ---
 

@@ -82,6 +82,7 @@ class TourismQueryRequest(BaseModel):
     tenant_name: str = Field(default="文旅平台", description="租户名称")
     conversation_id: str = Field(default="", description="会话ID，用于多轮对话")
     history: Optional[List[Dict]] = Field(default_factory=list, description="历史对话记录")
+    image_url: Optional[str] = Field(default=None, description="图片URL，提供后启用多模态图文问答")
 
 class TourismQueryResponse(BaseModel):
     """文旅问答响应模型"""
@@ -663,7 +664,39 @@ async def tourism_query(request: TourismQueryRequest):
         logger.info(
             f"【多Agent请求开始】request_id={request_id}, tenant_id={request.tenant_id}, user_query={request.user_query[:50]}...")
 
-        # 2. 查询缓存
+        # 2. 多模态分支：有图片时走图文问答
+        if request.image_url:
+            logger.info(f"【多模态分支】request_id={request_id}, image_url={request.image_url[:80]}")
+            try:
+                from multimodal.multimodal_agent import multimodal_agent
+                mm_result = multimodal_agent.analyze(
+                    query=request.user_query.strip(),
+                    image_url=request.image_url,
+                )
+                response_data = {
+                    "user_query": request.user_query.strip(),
+                    "intent": "multimodal",
+                    "need_recommend": False,
+                    "city": "",
+                    "scenic_name": "",
+                    "answer": mm_result.get("answer", ""),
+                    "weather_info": "",
+                    "scenic_info": mm_result.get("kg_supplement", ""),
+                    "time_info": "",
+                    "need_ask": False,
+                    "ask_message": "",
+                    "conversation_id": request.conversation_id or request_id,
+                    "error": "",
+                    "image_url": request.image_url,
+                    "multimodal": True,
+                }
+                logger.info(f"【多模态请求完成】request_id={request_id}")
+                return TourismQueryResponse(code=200, msg="success", data=response_data, request_id=request_id)
+            except Exception as e:
+                logger.warning(f"【多模态分支失败，回退到普通流程】{str(e)}")
+                # 降级到普通流程继续执行
+
+        # 3. 查询缓存
         cache_key = None
         if redis_cache:
             cache_key = redis_cache.make_key("cache:tourism:query", request.tenant_id, request.user_query.strip())

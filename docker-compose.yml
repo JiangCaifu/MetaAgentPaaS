@@ -16,10 +16,13 @@ services:
       - QDRANT_PORT=6333
       - NEO4J_HOST=neo4j
       - NEO4J_PORT=7687
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - LOG_LEVEL=INFO
     depends_on:
       - qdrant
       - neo4j
+      - redis
     volumes:
       - ./logs:/app/logs
       - ./reports:/app/reports
@@ -47,6 +50,23 @@ services:
       - agent-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ========== Redis 缓存 ==========
+  redis:
+    image: redis:7-alpine
+    container_name: metaagentpaas-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    networks:
+      - agent-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -80,6 +100,8 @@ services:
 
 # ========== 数据卷配置 ==========
 volumes:
+  redis_data:
+    driver: local
   qdrant_data:
     driver: local
   neo4j_data:

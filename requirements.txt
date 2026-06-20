@@ -19,3 +19,5 @@ langgraph>=0.2.0,<0.3.0
 ragas>=0.1.0
 tencentcloud-sdk-python>=3.0.0
 python-multipart>=0.0.6
+redis>=5.0.0
+locust>=2.20.0

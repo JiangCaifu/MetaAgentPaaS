@@ -298,6 +298,22 @@ try:
 except Exception as e:
     logger.warning(f"⚠️ 多模态问答API加载失败：{str(e)}")
 
+# ====================== 缓存管理路由 ======================
+try:
+    from cache.cache_api import router as cache_router
+    app.include_router(cache_router)
+    logger.info("✅ 缓存管理API加载成功")
+except Exception as e:
+    logger.warning(f"⚠️ 缓存管理API加载失败：{str(e)}")
+
+# ====================== Redis缓存客户端 ======================
+try:
+    from cache.redis_client import redis_cache
+    logger.info(f"✅ Redis缓存初始化：{'Redis' if redis_cache.is_available else '内存降级'}模式")
+except Exception as e:
+    logger.warning(f"⚠️ Redis缓存初始化失败：{str(e)}")
+    redis_cache = None
+
 
 # ====================== 7. 健康检查接口 ======================
 @app.get("/health", tags=["基础接口"])
@@ -647,7 +663,16 @@ async def tourism_query(request: TourismQueryRequest):
         logger.info(
             f"【多Agent请求开始】request_id={request_id}, tenant_id={request.tenant_id}, user_query={request.user_query[:50]}...")
 
-        # 2. 构建LangGraph状态
+        # 2. 查询缓存
+        cache_key = None
+        if redis_cache:
+            cache_key = redis_cache.make_key("cache:tourism:query", request.tenant_id, request.user_query.strip())
+            cached = redis_cache.get_json(cache_key)
+            if cached:
+                logger.info(f"【缓存命中】request_id={request_id}")
+                return TourismQueryResponse(code=200, msg="success (cached)", data=cached, request_id=request_id)
+
+        # 3. 构建LangGraph状态
         graph_state = TourGraphState(
             user_query=request.user_query.strip(),
             tenant_id=request.tenant_id,
@@ -656,10 +681,10 @@ async def tourism_query(request: TourismQueryRequest):
             history=request.history or []
         )
 
-        # 3. 异步调用多Agent流程
+        # 4. 异步调用多Agent流程
         result_state = await tour_graph_app.ainvoke(graph_state)
 
-        # 4. 构建响应数据
+        # 5. 构建响应数据
         response_data = {
             "user_query": result_state.get("user_query", ""),
             "intent": result_state.get("intent", ""),
@@ -677,7 +702,13 @@ async def tourism_query(request: TourismQueryRequest):
         }
 
         logger.info(f"【多Agent请求完成】request_id={request_id}, answer={response_data['answer'][:50]}...")
-        # 5. 返回响应
+
+        # 6. 写入缓存
+        if redis_cache and cache_key:
+            redis_cache.set_json(cache_key, response_data, ttl=300)
+            logger.info(f"【缓存写入】request_id={request_id}")
+
+        # 7. 返回响应
         return TourismQueryResponse(
             code=200,
             msg="success",
@@ -726,35 +757,53 @@ async def tourism_recommend(request: TourismQueryRequest):
 # ==========================
 @app.get("/api/kg/city/{city_name}", summary="查询城市景点（知识图谱）")
 async def get_city_spots(city_name: str):
-    """直接调用知识图谱查询指定城市的景点（NetworkX版）"""
+    """直接调用知识图谱查询指定城市的景点（NetworkX版），带Redis缓存"""
+    # 查缓存
+    if redis_cache:
+        cache_key = redis_cache.make_key("cache:kg:city", city_name)
+        cached = redis_cache.get_json(cache_key)
+        if cached:
+            return {"code": 200, "msg": "success (cached)", "data": cached}
+
     kg_service = get_kg_service()
     if not kg_service:
         raise HTTPException(status_code=503, detail="知识图谱服务未初始化")
-    
+
     spots = kg_service.get_city_scenic_spots(city_name)
     if not spots:
         raise HTTPException(status_code=404, detail=f"未查询到{city_name}的景点数据")
-    return {
-        "code": 200,
-        "msg": "success",
-        "data": {"city": city_name, "spots": spots}
-    }
+
+    # 写缓存
+    result = {"city": city_name, "spots": spots}
+    if redis_cache:
+        redis_cache.set_json(cache_key, result, ttl=600)
+
+    return {"code": 200, "msg": "success", "data": result}
 
 @app.get("/api/kg/scenic/{spot_name}/traffic", summary="查询景点交通信息（知识图谱）")
 async def get_scenic_traffic(spot_name: str):
-    """查询指定景点的交通信息（NetworkX版）"""
+    """查询指定景点的交通信息（NetworkX版），带Redis缓存"""
+    # 查缓存
+    if redis_cache:
+        cache_key = redis_cache.make_key("cache:kg:scenic:traffic", spot_name)
+        cached = redis_cache.get_json(cache_key)
+        if cached:
+            return {"code": 200, "msg": "success (cached)", "data": cached}
+
     kg_service = get_kg_service()
     if not kg_service:
         raise HTTPException(status_code=503, detail="知识图谱服务未初始化")
-    
+
     traffic = kg_service.get_scenic_traffic(spot_name)
     if not traffic:
         raise HTTPException(status_code=404, detail=f"未查询到{spot_name}的交通信息")
-    return {
-        "code": 200,
-        "msg": "success",
-        "data": {"spot": spot_name, "traffic": traffic}
-    }
+
+    # 写缓存
+    result = {"spot": spot_name, "traffic": traffic}
+    if redis_cache:
+        redis_cache.set_json(cache_key, result, ttl=600)
+
+    return {"code": 200, "msg": "success", "data": result}
 
 @app.get("/api/kg/scenic/{spot_name}/recommend", summary="查询景点推荐（知识图谱）")
 async def get_scenic_recommend(spot_name: str):

@@ -699,7 +699,7 @@ async def tourism_query(request: TourismQueryRequest):
         # 3. 查询缓存
         cache_key = None
         if redis_cache:
-            cache_key = redis_cache.make_key("cache:tourism:query", request.tenant_id, request.user_query.strip())
+            cache_key = redis_cache.make_key("cache:tourism:query", request.tenant_id, request.user_query.strip(), request.image_url or "")
             cached = redis_cache.get_json(cache_key)
             if cached:
                 logger.info(f"【缓存命中】request_id={request_id}")

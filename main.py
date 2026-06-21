@@ -316,6 +316,18 @@ except Exception as e:
     redis_cache = None
 
 
+# ====================== 启动时自动清缓存（防止代码更新后返回旧数据） ======================
+@app.on_event("startup")
+async def startup_clear_cache():
+    """服务启动时清空Redis缓存，确保代码/模型更新后不会返回旧数据"""
+    if redis_cache and redis_cache.is_available:
+        redis_cache.clear_all()
+        logger.info("✅ 启动时已清空Redis缓存（防止旧数据残留）")
+    elif redis_cache:
+        redis_cache._memory_cache.clear()
+        logger.info("✅ 启动时已清空内存缓存")
+
+
 # ====================== 7. 健康检查接口 ======================
 @app.get("/health", tags=["基础接口"])
 async def health_check():
